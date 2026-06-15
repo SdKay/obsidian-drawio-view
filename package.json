@@ -1,0 +1,37 @@
+{
+    "name": "drawio-view",
+    "version": "0.0.1",
+    "description": "Render draw.io diagrams in Obsidian notes.",
+    "main": "main.js",
+    "type": "module",
+    "scripts": {
+        "dev": "node esbuild.config.mjs",
+        "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+        "lint": "eslint ."
+    },
+    "keywords": ["obsidian", "drawio", "diagram"],
+    "license": "MIT",
+    "author": "sdking.xing",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/SdKay/obsidian-drawio-view.git"
+    },
+    "homepage": "https://github.com/SdKay/obsidian-drawio-view",
+    "dependencies": {
+        "@maxgraph/core": "^0.23.0",
+        "pako": "^2.1.0"
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.39.4",
+        "@types/node": "^22.15.17",
+        "@types/pako": "^2.0.3",
+        "esbuild": "0.25.5",
+        "eslint": "^9.39.4",
+        "eslint-plugin-obsidianmd": "^0.3.0",
+        "globals": "^17.6.0",
+        "jiti": "^2.6.1",
+        "obsidian": "latest",
+        "typescript": "^5.8.3",
+        "typescript-eslint": "^8.59.1"
+    }
+}
