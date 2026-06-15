@@ -5,6 +5,8 @@ Powered by [@maxgraph/core](https://github.com/maxGraph/maxGraph) — the TypeSc
 
 ---
 
+![](drawio-view-demo.gif)
+
 ## Usage
 
 Place your `.drawio` file anywhere in the vault, then embed it with a fenced code block:
