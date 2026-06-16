@@ -1,4 +1,4 @@
-import { MarkdownRenderChild, MarkdownSectionInformation, Plugin, TFile } from 'obsidian';
+import { MarkdownRenderChild, MarkdownSectionInformation, Plugin, TFile, normalizePath } from 'obsidian';
 import { parseViewParams, type ViewOptions } from './parser';
 import { DrawioViewer } from './viewer';
 
@@ -18,45 +18,43 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 		const onUpdate = async (newParams: string) => {
 			const file = this.app_.vault.getAbstractFileByPath(this.sourcePath);
 			if (!(file instanceof TFile)) return;
-			const content = await this.app_.vault.read(file);
-
-			let updated: string;
-
-			if (this.sectionInfo) {
-				// Precise line-based replacement using the section's known position.
-				// sectionInfo.lineStart = opening fence line
-				// sectionInfo.lineEnd   = closing fence line
-				const sep = content.includes('\r\n') ? '\r\n' : '\n';
-				const lines = content.split(/\r?\n/);
-				const indent = lines[this.sectionInfo.lineStart]?.match(/^[ \t]*/)?.[0] ?? '';
-				const before = lines.slice(0, this.sectionInfo.lineStart + 1);
-				const after  = lines.slice(this.sectionInfo.lineEnd);
-				updated = [...before, indent + newParams, ...after].join(sep);
-			} else {
-				// Fallback: find the first matching block by content.
-				const escContent = this.originalSource.trim()
-					.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-				if (!escContent) return;
-				const pattern = new RegExp(
-					'([ \\t]*)(`{3,})drawio-view[^\\n]*[\\r\\n]+' +
-					'[ \\t]*' + escContent + '[ \\t]*[\\r\\n]+' +
-					'[ \\t]*\\2',
-					'g',
-				);
-				let replaced = false;
-				updated = content.replace(pattern, (_, indent, fence) => {
-					if (replaced) return _;
-					replaced = true;
-					return `${indent}${fence}drawio-view\n${indent}${newParams}\n${indent}${fence}`;
-				});
-			}
-
-			if (updated !== content) await this.app_.vault.modify(file, updated);
+			// Vault.process edits the file atomically (no races with other plugins);
+			// it's the recommended API for content transforms not tied to the cursor.
+			await this.app_.vault.process(file, content => this.rewrite(content, newParams));
 		};
 
 		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, onUpdate);
 		this.addChild(viewer);
 		viewer.load();
+	}
+
+	/** Replace this block's parameter line with `newParams`, preserving indentation. */
+	private rewrite(content: string, newParams: string): string {
+		if (this.sectionInfo) {
+			// Precise line-based replacement using the section's known position.
+			// sectionInfo.lineStart = opening fence line; lineEnd = closing fence.
+			const sep = content.includes('\r\n') ? '\r\n' : '\n';
+			const lines = content.split(/\r?\n/);
+			const indent = lines[this.sectionInfo.lineStart]?.match(/^[ \t]*/)?.[0] ?? '';
+			const before = lines.slice(0, this.sectionInfo.lineStart + 1);
+			const after  = lines.slice(this.sectionInfo.lineEnd);
+			return [...before, indent + newParams, ...after].join(sep);
+		}
+		// Fallback: replace only the first block matching the original content.
+		const escContent = this.originalSource.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		if (!escContent) return content;
+		const pattern = new RegExp(
+			'([ \\t]*)(`{3,})drawio-view[^\\n]*[\\r\\n]+' +
+			'[ \\t]*' + escContent + '[ \\t]*[\\r\\n]+' +
+			'[ \\t]*\\2',
+			'g',
+		);
+		let replaced = false;
+		return content.replace(pattern, (whole, indent, fence) => {
+			if (replaced) return whole;
+			replaced = true;
+			return `${indent}${fence}drawio-view\n${indent}${newParams}\n${indent}${fence}`;
+		});
 	}
 }
 
@@ -75,9 +73,11 @@ export default class DrawioViewPlugin extends Plugin {
 	}
 
 	private resolveRelative(filename: string, sourcePath: string): string {
-		if (this.app.vault.getAbstractFileByPath(filename)) return filename;
-		const resolved = this.app.metadataCache.getFirstLinkpathDest(filename, sourcePath);
+		const norm = normalizePath(filename);
+		if (this.app.vault.getAbstractFileByPath(norm)) return norm;
+		// Resolve as a vault link relative to the source note (handles bare names).
+		const resolved = this.app.metadataCache.getFirstLinkpathDest(norm, sourcePath);
 		if (resolved instanceof TFile) return resolved.path;
-		return filename;
+		return norm;
 	}
 }

@@ -49,14 +49,20 @@
     background: transparent;
 }
 
+.drawio-view-graph.is-grabbing {
+    cursor: grabbing;
+}
+
 /* Inner pan layer that @maxgraph renders into; this is what gets CSS-translated.
    It overflows graphEl freely so off-screen content stays in the DOM. */
 .drawio-view-pan {
     position: absolute;
     inset: 0;
     overflow: visible;
-    /* transform-origin 0 0 is required by the pan/zoom math in viewer.ts. */
+    /* transform-origin 0 0 is required by the pan/zoom math in viewer.ts.
+       The pan/zoom values are fed in as CSS custom properties from the viewer. */
     transform-origin: 0 0;
+    transform: translate3d(var(--dv-tx, 0px), var(--dv-ty, 0px), 0) scale(var(--dv-scale, 1));
 }
 
 /* While panning, promote the pan layer to its own GPU compositor layer so that
@@ -105,6 +111,12 @@
     pointer-events: none;
     z-index: 10;
     white-space: nowrap;
+}
+
+/* Lift the status bar and apply button above the 28 px tab bar. */
+.drawio-view-container.has-tabs .drawio-view-status,
+.drawio-view-container.has-tabs .drawio-view-update-btn {
+    bottom: 32px;
 }
 
 /* ── Page tabs ───────────────────────────────────────────── */

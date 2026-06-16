@@ -68,18 +68,26 @@ export class DrawioViewer extends Component {
 
 		// Verify against the real file in the background; re-render only if the
 		// .drawio actually changed (or if there was no cache to paint from).
-		this.app.vault.read(file).then(content => {
+		void this.verifyAndRender(file, cached);
+	}
+
+	/** Read the file fresh and re-render if its content differs from the cache. */
+	private async verifyAndRender(file: TFile, cached: string | undefined): Promise<void> {
+		try {
+			const content = await this.app.vault.read(file);
 			if (content === cached) return;            // unchanged → nothing to do
 			contentCache.set(file.path, content);
 			this.renderFromContent(content);
-		}).catch(err => console.error('DrawioViewer:', err));
+		} catch (err) {
+			console.error('DrawioViewer:', err);
+		}
 	}
 
 	onunload(): void {
 		if (this.commitTimer) {
 			const w = activeWindow as unknown as { cancelIdleCallback?: (id: number) => void };
 			if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(this.commitTimer);
-			else activeWindow.clearTimeout(this.commitTimer);
+			else window.clearTimeout(this.commitTimer);
 			this.commitTimer = 0;
 		}
 		this.renderer?.destroy();
@@ -113,9 +121,13 @@ export class DrawioViewer extends Component {
 	}
 
 	private resolveFile(filename: string): TFile | null {
+		// main.ts already resolved this to a vault-absolute path; a direct lookup
+		// avoids iterating all files (which is slow on large vaults).
 		const f = this.app.vault.getAbstractFileByPath(filename);
 		if (f instanceof TFile) return f;
-		return this.app.vault.getFiles().find(tf => tf.name === filename || tf.basename === filename) ?? null;
+		// Last-resort link resolution for a bare name.
+		const linked = this.app.metadataCache.getFirstLinkpathDest(filename, '');
+		return linked instanceof TFile ? linked : null;
 	}
 
 	private buildLayout(): void {
@@ -137,11 +149,11 @@ export class DrawioViewer extends Component {
 		this.statusEl.setAttribute('aria-live', 'polite');
 
 		if (this.pages.length > 1) {
+			// `has-tabs` lifts the status bar / apply button above the tab bar (CSS).
+			this.container.addClass('has-tabs');
 			this.tabsEl = this.container.createDiv('drawio-view-tabs');
 			this.tabsEl.setAttribute('role', 'tablist');
 			this.buildTabs();
-			// Push status bar up so it doesn't overlap the 28 px tab bar.
-			this.statusEl.style.bottom = '32px';
 		}
 
 		// "Apply view to code block" button — only shown when an update callback
@@ -156,7 +168,6 @@ export class DrawioViewer extends Component {
 				},
 			});
 			btn.setText('⊙');
-			if (this.pages.length > 1) btn.style.bottom = '32px';
 			this.registerDomEvent(btn, 'click', () => {
 				this.applyCurrentView().catch(err => console.error('DrawioViewer update:', err));
 			});
@@ -260,7 +271,7 @@ export class DrawioViewer extends Component {
 
 		// Reset the visual CSS transform when (re)loading a page.
 		this.vScale = 1; this.vTx = 0; this.vTy = 0;
-		panEl.style.transform = '';
+		this.clearVisualTransform();
 
 		const bbox = this.renderer.loadXml(page.xml);
 		this.currentBbox = bbox;
@@ -275,7 +286,7 @@ export class DrawioViewer extends Component {
 		} else {
 			// Either auto-fit (zoom=0) or zoom-only (centre at given zoom).
 			// Defer until the container has real pixel dimensions.
-			requestAnimationFrame(() => {
+			window.requestAnimationFrame(() => {
 				if (!this.renderer || !this.graphEl) return;
 				const rect = this.graphEl.getBoundingClientRect();
 				const cw = rect.width || this.graphEl.offsetWidth || 600;
@@ -362,10 +373,9 @@ export class DrawioViewer extends Component {
 		/** Schedule one CSS transform write + status update per frame. */
 		const scheduleApply = () => {
 			if (applyRaf) return;
-			applyRaf = activeWindow.requestAnimationFrame(() => {
+			applyRaf = window.requestAnimationFrame(() => {
 				applyRaf = 0;
-				panEl.style.transform =
-					`translate3d(${this.vTx}px,${this.vTy}px,0) scale(${this.vScale})`;
+				this.applyVisualTransform();
 				this.updateStatus();
 			});
 		};
@@ -383,7 +393,7 @@ export class DrawioViewer extends Component {
 			const dfx = this.vTx + this.vScale * d0.x;
 			const dfy = this.vTy + this.vScale * d0.y;
 			this.vScale = 1; this.vTx = 0; this.vTy = 0;
-			panEl.style.transform = '';
+			this.clearVisualTransform();
 			this.renderer.setViewFromDisplay(sf * 100, dfx, dfy);
 		};
 
@@ -410,7 +420,7 @@ export class DrawioViewer extends Component {
 		const cancelCommit = () => {
 			if (!this.commitTimer) return;
 			if (useRic) w.cancelIdleCallback!(this.commitTimer);
-			else activeWindow.clearTimeout(this.commitTimer);
+			else window.clearTimeout(this.commitTimer);
 			this.commitTimer = 0;
 		};
 		const scheduleCommit = () => {
@@ -429,7 +439,7 @@ export class DrawioViewer extends Component {
 			// The timeout caps how long crispness can be delayed on a busy tab.
 			this.commitTimer = useRic
 				? w.requestIdleCallback!(run, { timeout: 600 })
-				: activeWindow.setTimeout(run, 250);
+				: window.setTimeout(run, 250);
 		};
 
 		// ── Wheel zoom — CSS scale during gesture ─────────────────────────────
@@ -466,7 +476,7 @@ export class DrawioViewer extends Component {
 			dragStartY = e.clientY;
 			dragBaseTx = this.vTx;
 			dragBaseTy = this.vTy;
-			graphEl.style.cursor = 'grabbing';
+			graphEl.addClass('is-grabbing');
 			panEl.addClass('is-panning');
 		}, true);
 
@@ -480,7 +490,7 @@ export class DrawioViewer extends Component {
 		this.registerDomEvent(activeDocument, 'mouseup', () => {
 			if (!dragging) return;
 			dragging = false;
-			graphEl.style.cursor = '';
+			graphEl.removeClass('is-grabbing');
 			// Re-arm the commit: commits the uncommitted zoom (if any) once idle,
 			// or just drops the is-panning layer for a pure pan.
 			scheduleCommit();
@@ -492,7 +502,7 @@ export class DrawioViewer extends Component {
 		if (!this.renderer || !this.graphEl) return;
 		// Clear the visual CSS transform — the view is set directly in @maxgraph.
 		this.vScale = 1; this.vTx = 0; this.vTy = 0;
-		if (this.panEl) this.panEl.style.transform = '';
+		this.clearVisualTransform();
 		if (this.options.zoom > 0) {
 			this.renderer.setViewFromDisplay(this.defaultZoom, this.defaultDisplayX, this.defaultDisplayY);
 		} else {
@@ -518,5 +528,23 @@ export class DrawioViewer extends Component {
 	private currentDisplayOffset(): { x: number; y: number } {
 		const base = this.renderer?.getDisplayOffset() ?? { x: 0, y: 0 };
 		return { x: this.vTx + this.vScale * base.x, y: this.vTy + this.vScale * base.y };
+	}
+
+	/**
+	 * Write the visual pan/zoom as CSS custom properties on the pan element.
+	 * The `transform` itself lives in styles.css (`.drawio-view-pan`), reading
+	 * these vars — so we never assign element.style directly.
+	 */
+	private applyVisualTransform(): void {
+		this.panEl?.setCssProps({
+			'--dv-tx': `${this.vTx}px`,
+			'--dv-ty': `${this.vTy}px`,
+			'--dv-scale': `${this.vScale}`,
+		});
+	}
+
+	/** Reset the visual transform vars to identity. */
+	private clearVisualTransform(): void {
+		this.panEl?.setCssProps({ '--dv-tx': '0px', '--dv-ty': '0px', '--dv-scale': '1' });
 	}
 }

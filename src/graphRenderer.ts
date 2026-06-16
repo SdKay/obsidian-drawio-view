@@ -1,4 +1,4 @@
-import { Graph, ModelXmlSerializer, InternalEvent } from '@maxgraph/core';
+import { Graph, ModelXmlSerializer, InternalEvent, type ShapeValue } from '@maxgraph/core';
 
 export interface BoundingBox {
 	x: number;
@@ -26,7 +26,6 @@ export class GraphRenderer {
 		// read-only viewer.  They would register their own event listeners and
 		// interfere with ours.
 		this.graph = new Graph(container, undefined, []);
-		container.style.background = 'transparent';
 
 		this.graph.setEnabled(false);
 		this.graph.setConnectable(false);
@@ -50,9 +49,8 @@ export class GraphRenderer {
 			'actor', 'arrow', 'arrowConnector', 'cloud', 'cylinder',
 			'doubleEllipse', 'ellipse', 'hexagon', 'image', 'label',
 			'line', 'rhombus', 'swimlane', 'triangle',
-		]) {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			stylesheet.putCellStyle(name, { shape: name } as any);
+		] as ShapeValue[]) {
+			stylesheet.putCellStyle(name, { shape: name });
 		}
 
 		// @maxgraph's built-in default vertex style has fillColor:#C3D9FF,
@@ -60,19 +58,14 @@ export class GraphRenderer {
 		// defaults and cause unwanted blue fills and coloured borders/text on
 		// cells that have no explicit colour in the diagram.
 		// Reset them to draw.io's standard defaults (white fill, black strokes).
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const dvs = stylesheet.getDefaultVertexStyle() as any;
-		if (dvs) {
-			dvs.fillColor   = '#ffffff';
-			dvs.strokeColor = '#000000';
-			dvs.fontColor   = '#000000';
-		}
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const des = stylesheet.getDefaultEdgeStyle() as any;
-		if (des) {
-			des.strokeColor = '#000000';
-			des.fontColor   = '#000000';
-		}
+		const dvs = stylesheet.getDefaultVertexStyle();
+		dvs.fillColor = '#ffffff';
+		dvs.strokeColor = '#000000';
+		dvs.fontColor = '#000000';
+
+		const des = stylesheet.getDefaultEdgeStyle();
+		des.strokeColor = '#000000';
+		des.fontColor = '#000000';
 	}
 
 	/** Load (or replace) the diagram content from an mxGraphModel XML string. */
