@@ -45,7 +45,7 @@ export class DrawioViewer extends Component {
 	private vTy = 0;
 	/** Fold the visual CSS transform into @maxgraph (one redraw) and clear it. */
 	private flushView: () => void = () => {};
-	/** Pending debounced commit timer id (0 = none). Cancelled by any new gesture. */
+	/** Pending auto-commit timer (0 = none). */
 	private commitTimer = 0;
 
 	constructor(
@@ -79,6 +79,64 @@ export class DrawioViewer extends Component {
 		// Verify against the real file in the background; re-render only if the
 		// .drawio actually changed (or if there was no cache to paint from).
 		void this.verifyAndRender(file, cached);
+
+		// Watch for external edits to the .drawio file (e.g. saved from draw.io
+		// desktop) and re-render automatically.  registerEvent ensures the
+		// listener is removed when this viewer unloads.
+		// Debounced: draw.io may fire rapid autosave events; wait until writes
+		// settle before re-rendering to avoid redundant redraws.
+		let reloadTimer = 0;
+		this.registerEvent(
+			this.app.vault.on('modify', (changedFile) => {
+				if (!(changedFile instanceof TFile) || changedFile.path !== file.path) return;
+				window.clearTimeout(reloadTimer);
+				reloadTimer = window.setTimeout(() => {
+					reloadTimer = 0;
+					void this.reloadFile(changedFile);
+				}, 400);
+			}),
+		);
+	}
+
+	/**
+	 * Reload a modified .drawio file.  Uses a soft-reload (only re-parses and
+	 * re-loads the XML into the existing renderer) when the page count is
+	 * unchanged, which avoids rebuilding the entire DOM and is much faster.
+	 * Falls back to a full rebuild only when the structure actually changed.
+	 */
+	private async reloadFile(file: TFile): Promise<void> {
+		try {
+			const content = await this.app.vault.read(file);
+			const prev = contentCache.get(file.path);
+			if (content === prev) return;          // no change
+			contentCache.set(file.path, content);
+
+			const drawio = parseDrawioCached(content);
+
+			// Soft-reload: same number of pages and renderer already exists.
+			if (this.renderer && drawio.pages.length === this.pages.length) {
+				this.pages = drawio.pages;
+				const page = this.pages[this.currentPage];
+				if (page) {
+					this.vScale = 1; this.vTx = 0; this.vTy = 0;
+					this.clearVisualTransform();
+					const bbox = this.renderer.loadXml(page.xml);
+					this.currentBbox = bbox;
+					// Re-fit if no explicit zoom was set.
+					if (this.options.zoom === 0 && this.graphEl) {
+						const rect = this.graphEl.getBoundingClientRect();
+						this.renderer.autoFit(rect.width || 600, rect.height || 380, bbox);
+					}
+					this.updateStatus();
+				}
+				return;
+			}
+
+			// Full rebuild needed (page count changed or no renderer yet).
+			this.renderFromContent(content);
+		} catch (err) {
+			console.error('DrawioViewer reload:', err);
+		}
 	}
 
 	/** Read the file fresh and re-render if its content differs from the cache. */
@@ -94,12 +152,7 @@ export class DrawioViewer extends Component {
 	}
 
 	onunload(): void {
-		if (this.commitTimer) {
-			const w = activeWindow as unknown as { cancelIdleCallback?: (id: number) => void };
-			if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(this.commitTimer);
-			else window.clearTimeout(this.commitTimer);
-			this.commitTimer = 0;
-		}
+		if (this.commitTimer) { window.clearTimeout(this.commitTimer); this.commitTimer = 0; }
 		this.renderer?.destroy();
 		this.renderer = null;
 	}
@@ -153,25 +206,16 @@ export class DrawioViewer extends Component {
 		this.graphEl = this.container.createDiv('drawio-view-graph');
 		this.panEl = this.graphEl.createDiv('drawio-view-pan');
 
-		// Status bar is a sibling of graphEl (not inside it) so @maxgraph/core's
-		// internal HTML-label overlay cannot interfere with its position.
-		this.statusEl = this.container.createDiv('drawio-view-status');
-		this.statusEl.setAttribute('aria-live', 'polite');
+		// HUD: apply button (optional) + status text, bottom-right corner.
+		// Kept as a sibling of graphEl (not inside it) so @maxgraph's internal
+		// HTML-label overlay cannot interfere with its position.
+		const hud = this.container.createDiv('drawio-view-hud');
 
-		if (this.pages.length > 1) {
-			// `has-tabs` lifts the status bar / apply button above the tab bar (CSS).
-			this.container.addClass('has-tabs');
-			this.tabsEl = this.container.createDiv('drawio-view-tabs');
-			this.tabsEl.setAttribute('role', 'tablist');
-			this.buildTabs();
-		}
-
-		// "Apply view to code block" button — only shown when an update callback
-		// was provided (i.e. the viewer was created from a code block, not an embed).
 		if (this.onUpdate) {
-			const btn = this.container.createEl('button', {
+			const btn = hud.createEl('span', {
 				cls: 'drawio-view-update-btn',
 				attr: {
+					'role': 'button',
 					'aria-label': 'Apply current view to code block',
 					'title': 'Apply current view to code block',
 					'tabindex': '0',
@@ -181,6 +225,23 @@ export class DrawioViewer extends Component {
 			this.registerDomEvent(btn, 'click', () => {
 				this.applyCurrentView().catch(err => console.error('DrawioViewer update:', err));
 			});
+			this.registerDomEvent(btn, 'keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					this.applyCurrentView().catch(err => console.error('DrawioViewer update:', err));
+				}
+			});
+		}
+
+		this.statusEl = hud.createDiv('drawio-view-status');
+		this.statusEl.setAttribute('aria-live', 'polite');
+
+		if (this.pages.length > 1) {
+			// `has-tabs` lifts the HUD above the tab bar (CSS).
+			this.container.addClass('has-tabs');
+			this.tabsEl = this.container.createDiv('drawio-view-tabs');
+			this.tabsEl.setAttribute('role', 'tablist');
+			this.buildTabs();
 		}
 
 		// Bottom-edge resize handle — drag to change the viewer height.
@@ -419,61 +480,44 @@ export class DrawioViewer extends Component {
 		// CSS/GPU layer.  The real render fires exactly once — during the first
 		// idle gap after you truly stop — so it can never land inside a gesture.
 		//
-		// Pure panning (vScale === 1) needs no commit at all (a CSS translate is
-		// already crisp); only an uncommitted zoom schedules one.
-		const w = activeWindow as unknown as {
-			requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
-			cancelIdleCallback?: (id: number) => void;
-		};
-		const useRic = typeof w.requestIdleCallback === 'function';
-
+		// ── Commit scheduling ─────────────────────────────────────────────────
+		// setViewFromDisplay (via flushView) now detaches panEl from the DOM
+		// during the @maxgraph redraw, preventing cascading MutationObserver
+		// calls from other plugins.  The render should be ~100 ms instead of
+		// 3-4 s, making a 600 ms idle-delay safe and unnoticeable to users.
 		const cancelCommit = () => {
 			if (!this.commitTimer) return;
-			if (useRic) w.cancelIdleCallback!(this.commitTimer);
-			else window.clearTimeout(this.commitTimer);
+			window.clearTimeout(this.commitTimer);
 			this.commitTimer = 0;
 		};
 		const scheduleCommit = () => {
 			cancelCommit();
-			if (this.vScale === 1) {            // pure pan → no redraw ever
-				panEl.removeClass('is-panning');
-				return;
-			}
-			const run = () => {
+			if (this.vScale === 1) { panEl.removeClass('is-panning'); return; }
+			this.commitTimer = window.setTimeout(() => {
 				this.commitTimer = 0;
 				panEl.removeClass('is-panning');
 				this.flushView();
-			};
-			// Idle-driven: fires only during a genuine idle gap (no pending input),
-			// so the synchronous render never collides with an active gesture.
-			// The timeout caps how long crispness can be delayed on a busy tab.
-			this.commitTimer = useRic
-				? w.requestIdleCallback!(run, { timeout: 600 })
-				: window.setTimeout(run, 250);
+			}, 0);
 		};
 
 		// ── Wheel zoom — CSS scale during gesture ─────────────────────────────
 		this.registerDomEvent(graphEl, 'wheel', (e: WheelEvent) => {
-			// When the "Ctrl + scroll" setting is active, let plain wheel events
-			// fall through so the note scrolls normally; only zoom with Ctrl/Cmd.
 			if (this.settings.zoomModifier === 'ctrl' && !e.ctrlKey && !e.metaKey) {
 				return;
 			}
 			e.preventDefault();
 			e.stopPropagation();
-			cancelCommit();                     // interrupt any pending render
+			cancelCommit();
 			const f = e.deltaY < 0 ? 1.1 : 1 / 1.1;
 			const rect = graphEl.getBoundingClientRect();
 			const cx = e.clientX - rect.left;
 			const cy = e.clientY - rect.top;
-			// Scale about the cursor (transform-origin 0 0):
-			//   vT' = f·vT + c·(1−f),  vScale' = f·vScale
 			this.vTx = f * this.vTx + cx * (1 - f);
 			this.vTy = f * this.vTy + cy * (1 - f);
 			this.vScale *= f;
 			panEl.addClass('is-panning');
 			scheduleApply();
-			scheduleCommit();                   // (re)arm; fires only once idle
+			scheduleCommit();
 		}, { passive: false, capture: true });
 
 		// ── Pan — CSS translate ───────────────────────────────────────────────
@@ -485,7 +529,7 @@ export class DrawioViewer extends Component {
 			if (e.button !== 0) return;
 			e.preventDefault();
 			e.stopPropagation();
-			cancelCommit();                     // interrupt any pending render
+			cancelCommit();
 			dragging = true;
 			dragStartX = e.clientX;
 			dragStartY = e.clientY;
@@ -506,8 +550,6 @@ export class DrawioViewer extends Component {
 			if (!dragging) return;
 			dragging = false;
 			graphEl.removeClass('is-grabbing');
-			// Re-arm the commit: commits the uncommitted zoom (if any) once idle,
-			// or just drops the is-panning layer for a pure pan.
 			scheduleCommit();
 			this.updateStatus();
 		});

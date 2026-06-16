@@ -95,27 +95,34 @@
     shape-rendering: crispEdges;
 }
 
-/* ── Status bar ──────────────────────────────────────────── */
+/* ── HUD (apply button + status bar) ─────────────────────── */
 /* Sibling of .drawio-view-graph, absolutely placed within .drawio-view-container.
    Stays clear of @maxgraph/core's internal HTML-label overlay layer. */
-.drawio-view-status {
+.drawio-view-hud {
     position: absolute;
     bottom: 4px;
     right: 6px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
     font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
     background: color-mix(in srgb, var(--background-primary) 85%, transparent);
-    padding: 1px 5px;
     border-radius: var(--radius-s);
+    overflow: hidden;
     pointer-events: none;
     z-index: 10;
     white-space: nowrap;
 }
 
-/* Lift the status bar and apply button above the 28 px tab bar. */
-.drawio-view-container.has-tabs .drawio-view-status,
-.drawio-view-container.has-tabs .drawio-view-update-btn {
+/* Lift the HUD above the 28 px tab bar. */
+.drawio-view-container.has-tabs .drawio-view-hud {
     bottom: 32px;
+}
+
+.drawio-view-hud .drawio-view-status {
+    padding: 1px 5px;
+    color: var(--text-muted);
+    background: transparent;
 }
 
 /* ── Page tabs ───────────────────────────────────────────── */
@@ -167,34 +174,29 @@
 }
 
 /* ── "Apply view" button ─────────────────────────────────── */
-/* Positioned bottom-left of the container, symmetric with the status bar. */
-.drawio-view-update-btn {
-    position: absolute;
-    bottom: 4px;
-    left: 6px;
-    font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
-    background: color-mix(in srgb, var(--background-primary) 85%, transparent);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-s);
-    padding: 1px 5px;
+/* Lives inside .drawio-view-hud, left of the status text.
+   Prefix .drawio-view-hud gives enough specificity to beat Obsidian's
+   button base styles (e.g. button:not(.clickable-icon) { background: … }). */
+.drawio-view-hud .drawio-view-update-btn {
+    pointer-events: auto;
+    background: transparent;
+    border-right: 1px solid var(--background-modifier-border);
+    padding: 1px 6px;
     cursor: pointer;
-    z-index: 10;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
     line-height: 1.4;
-    min-width: 44px;
-    min-height: 22px;
     user-select: none;
 }
 
-.drawio-view-update-btn:hover {
-    color: var(--text-normal);
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
+.drawio-view-hud .drawio-view-update-btn:hover {
+    color: var(--interactive-accent);
+    background: transparent;
 }
 
-.drawio-view-update-btn:focus-visible {
+.drawio-view-hud .drawio-view-update-btn:focus-visible {
     outline: 2px solid var(--interactive-accent);
-    outline-offset: 2px;
+    outline-offset: -2px;
 }
 
 /* ── Wiki-embed wrapper ──────────────────────────────────── */

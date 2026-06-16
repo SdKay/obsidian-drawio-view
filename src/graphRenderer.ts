@@ -108,7 +108,24 @@ export class GraphRenderer {
 	 */
 	setViewFromDisplay(zoomPct: number, displayX: number, displayY: number): void {
 		const scale = zoomPct / 100;
+		// Detach the container from the DOM before the @maxgraph redraw.
+		// @maxgraph updates hundreds of SVG element attributes when the view
+		// changes; each attribute mutation fires every MutationObserver that
+		// watches the document (i.e. every other Obsidian plugin), turning a
+		// ~100 ms render into 3-4 s in a loaded vault.  While the container is
+		// detached those mutations happen off-tree and are invisible to observers.
+		// Re-attaching fires exactly ONE childList mutation — far cheaper.
+		const container = this.graph.container;
+		const parent = container.parentElement;
+		const next = container.nextSibling;
+		if (parent) parent.removeChild(container);
+
 		this.graph.getView().scaleAndTranslate(scale, displayX / scale, displayY / scale);
+
+		if (parent) {
+			if (next) parent.insertBefore(container, next);
+			else parent.appendChild(container);
+		}
 	}
 
 	/** Current scale (1.0 = 100%). */
