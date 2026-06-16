@@ -75,6 +75,14 @@ Pan and zoom are GPU-composited and committed to the renderer only when you stop
 
 ---
 
+## Settings
+
+| Setting | Options | Description |
+|---------|---------|-------------|
+| **Zoom modifier key** | Scroll wheel / Ctrl + scroll wheel | How the scroll wheel zooms. Choose **Ctrl + scroll wheel** so plain scrolling moves through the note instead of zooming the diagram under the cursor. |
+
+---
+
 ## Installation
 
 ### Manual

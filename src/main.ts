@@ -1,6 +1,7 @@
 import { MarkdownRenderChild, MarkdownSectionInformation, Plugin, TFile, normalizePath } from 'obsidian';
 import { parseViewParams, type ViewOptions } from './parser';
 import { DrawioViewer } from './viewer';
+import { DEFAULT_SETTINGS, DrawioViewSettingTab, type DrawioViewSettings } from './settings';
 
 class DrawioCodeBlock extends MarkdownRenderChild {
 	constructor(
@@ -10,6 +11,7 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 		private sourcePath: string,
 		private originalSource: string,
 		private sectionInfo: MarkdownSectionInformation | null,
+		private settings: DrawioViewSettings,
 	) {
 		super(el);
 	}
@@ -23,7 +25,7 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 			await this.app_.vault.process(file, content => this.rewrite(content, newParams));
 		};
 
-		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, onUpdate);
+		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, this.settings, onUpdate);
 		this.addChild(viewer);
 		viewer.load();
 	}
@@ -59,7 +61,12 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 }
 
 export default class DrawioViewPlugin extends Plugin {
+	settings: DrawioViewSettings = { ...DEFAULT_SETTINGS };
+
 	async onload(): Promise<void> {
+		await this.loadSettings();
+		this.addSettingTab(new DrawioViewSettingTab(this.app, this));
+
 		this.registerMarkdownCodeBlockProcessor('drawio-view', (source, el, ctx) => {
 			const options = parseViewParams(source.trim());
 			if (!options.filename) {
@@ -68,8 +75,17 @@ export default class DrawioViewPlugin extends Plugin {
 			}
 			options.filename = this.resolveRelative(options.filename, ctx.sourcePath);
 			const sectionInfo = ctx.getSectionInfo(el);
-			ctx.addChild(new DrawioCodeBlock(el, this.app, options, ctx.sourcePath, source, sectionInfo));
+			// Pass the live settings object so viewers see changes without reload.
+			ctx.addChild(new DrawioCodeBlock(el, this.app, options, ctx.sourcePath, source, sectionInfo, this.settings));
 		});
+	}
+
+	async loadSettings(): Promise<void> {
+		Object.assign(this.settings, DEFAULT_SETTINGS, (await this.loadData()) as Partial<DrawioViewSettings>);
+	}
+
+	async saveSettings(): Promise<void> {
+		await this.saveData(this.settings);
 	}
 
 	private resolveRelative(filename: string, sourcePath: string): string {

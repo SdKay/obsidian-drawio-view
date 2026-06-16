@@ -1,6 +1,7 @@
 import { App, Component, TFile } from 'obsidian';
 import { parseDrawioCached, type ViewOptions, type DrawioPage } from './parser';
 import { GraphRenderer, type BoundingBox } from './graphRenderer';
+import type { DrawioViewSettings } from './settings';
 
 // Module-level cache of .drawio file CONTENT keyed by path.  Crucial for a
 // flash-free re-render: when the ⊙ button writes view params into the .md file,
@@ -13,6 +14,8 @@ export class DrawioViewer extends Component {
 	private readonly app: App;
 	private readonly container: HTMLElement;
 	private readonly options: ViewOptions;
+	/** Live plugin settings (shared reference; reflects changes without reload). */
+	private readonly settings: DrawioViewSettings;
 	/** Called when the user clicks "apply current view to code block". */
 	private readonly onUpdate: ((newParams: string) => Promise<void>) | null;
 
@@ -45,11 +48,18 @@ export class DrawioViewer extends Component {
 	/** Pending debounced commit timer id (0 = none). Cancelled by any new gesture. */
 	private commitTimer = 0;
 
-	constructor(app: App, container: HTMLElement, options: ViewOptions, onUpdate?: (newParams: string) => Promise<void>) {
+	constructor(
+		app: App,
+		container: HTMLElement,
+		options: ViewOptions,
+		settings: DrawioViewSettings,
+		onUpdate?: (newParams: string) => Promise<void>,
+	) {
 		super();
 		this.app = app;
 		this.container = container;
 		this.options = options;
+		this.settings = settings;
 		this.onUpdate = onUpdate ?? null;
 	}
 
@@ -444,6 +454,11 @@ export class DrawioViewer extends Component {
 
 		// ── Wheel zoom — CSS scale during gesture ─────────────────────────────
 		this.registerDomEvent(graphEl, 'wheel', (e: WheelEvent) => {
+			// When the "Ctrl + scroll" setting is active, let plain wheel events
+			// fall through so the note scrolls normally; only zoom with Ctrl/Cmd.
+			if (this.settings.zoomModifier === 'ctrl' && !e.ctrlKey && !e.metaKey) {
+				return;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			cancelCommit();                     // interrupt any pending render

@@ -16,6 +16,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + all tags needed for git log between tags
 
       - uses: actions/setup-node@v4
         with:
@@ -28,11 +30,48 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          RANGE="${PREV:+${PREV}..}HEAD"
+
+          extract() {
+            git log $RANGE --pretty=format:"- %s" | grep -E "^- $1" || true
+          }
+
+          FEAT=$(extract "feat")
+          FIX=$(extract "fix")
+          PERF=$(extract "perf")
+          REF=$(extract "refactor")
+          DOCS=$(extract "docs")
+          OTHER=$(git log $RANGE --pretty=format:"- %s" \
+            | grep -Ev "^- (feat|fix|perf|refactor|docs|chore|build|ci|Merge)" || true)
+
+          BODY=""
+          [ -n "$FEAT" ]  && BODY+=$'## 🚀 Features\n'"$FEAT"$'\n\n'
+          [ -n "$FIX" ]   && BODY+=$'## 🐛 Bug fixes\n'"$FIX"$'\n\n'
+          [ -n "$PERF" ]  && BODY+=$'## ⚡ Performance\n'"$PERF"$'\n\n'
+          [ -n "$REF" ]   && BODY+=$'## ♻️ Refactor\n'"$REF"$'\n\n'
+          [ -n "$DOCS" ]  && BODY+=$'## 📝 Documentation\n'"$DOCS"$'\n\n'
+          [ -n "$OTHER" ] && BODY+=$'## 🔧 Other changes\n'"$OTHER"$'\n\n'
+
+          if [ -n "$PREV" ]; then
+            REPO="${{ github.repository }}"
+            BODY+="**Full changelog**: https://github.com/${REPO}/compare/${PREV}...${{ github.ref_name }}"
+          fi
+
+          {
+            echo 'body<<EOF'
+            echo "$BODY"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # Release name = tag name (e.g. "0.0.1")
           name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
           # Attach the three files required by Obsidian plugin installations.
           # GitHub automatically adds "Source code (zip)" and "(tar.gz)" to
           # every release — no extra step needed.
