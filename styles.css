@@ -35,8 +35,8 @@
     opacity: 0.7;
 }
 
-.drawio-view-resize-handle:hover {
-    opacity: 1 !important;
+.drawio-view-container .drawio-view-resize-handle:hover {
+    opacity: 1;
 }
 
 /* ── Graph area ──────────────────────────────────────────── */
@@ -72,9 +72,9 @@
 }
 
 /* @maxgraph renders its own layers inside the pan element */
-.drawio-view-pan > div,
-.drawio-view-pan > svg {
-    background: transparent !important;
+.drawio-view-graph .drawio-view-pan > div,
+.drawio-view-graph .drawio-view-pan > svg {
+    background: transparent;
 }
 
 /* Ensure @maxgraph's SVG paints content beyond its nominal box so panned-away
@@ -127,10 +127,8 @@
     overflow-x: auto;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-secondary);
-    scrollbar-width: none;
+    scrollbar-width: none;   /* hides scrollbar in all modern browsers Obsidian uses */
 }
-
-.drawio-view-tabs::-webkit-scrollbar { display: none; }
 
 .drawio-view-tab {
     flex-shrink: 0;

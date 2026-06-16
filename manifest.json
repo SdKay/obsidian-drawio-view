@@ -1,7 +1,7 @@
 {
     "id": "drawio-view",
     "name": "Draw.io View",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "minAppVersion": "1.1.0",
     "description": "Render draw.io diagrams inline in your notes with zoom, pan, and multi-page support.",
     "author": "sdking.xing",
