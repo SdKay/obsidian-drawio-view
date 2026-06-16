@@ -9,7 +9,6 @@
     overflow: hidden;
     background: var(--background-primary);
     user-select: none;
-    -webkit-user-select: none;
     position: relative;
 }
 
@@ -124,10 +123,9 @@
     display: flex;
     flex-direction: row;
     flex-shrink: 0;
-    overflow-x: auto;
+    overflow: hidden;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-secondary);
-    scrollbar-width: none;   /* hides scrollbar in all modern browsers Obsidian uses */
 }
 
 .drawio-view-tab {
