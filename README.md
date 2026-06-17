@@ -85,15 +85,16 @@ Pan and zoom are GPU-composited and committed to the renderer only when you stop
 
 ## Installation
 
+### Community plugin marketplace (recommended)
+
+1. In Obsidian: **Settings → Community plugins → Browse**.
+2. Search for **draw.io view** and click **Install**, then **Enable**.
+
 ### Manual
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/SdKay/obsidian-drawio-view/releases/latest).
 2. Copy them to `<vault>/.obsidian/plugins/drawio-view/`.
 3. In Obsidian: **Settings → Community plugins → Reload plugins**, then enable **Draw.io View**.
-
-### BRAT (beta)
-
-Add `SdKay/obsidian-drawio-view` via [BRAT](https://github.com/TfTHacker/obsidian42-brat).
 
 ---
 
