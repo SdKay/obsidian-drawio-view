@@ -25,7 +25,7 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 			await this.app_.vault.process(file, content => this.rewrite(content, newParams));
 		};
 
-		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, this.settings, onUpdate);
+		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, this.settings, this.sourcePath, onUpdate);
 		this.addChild(viewer);
 		viewer.load();
 	}

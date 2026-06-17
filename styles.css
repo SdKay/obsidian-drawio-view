@@ -48,6 +48,10 @@
     background: transparent;
 }
 
+.drawio-view-graph.has-link-hover {
+    cursor: pointer;
+}
+
 .drawio-view-graph.is-grabbing {
     cursor: grabbing;
 }
@@ -93,6 +97,33 @@
 .drawio-view-graph line,
 .drawio-view-graph polyline {
     shape-rendering: crispEdges;
+}
+
+/* ── Shape hover highlight ───────────────────────────────── */
+/* Lives inside panEl so it shares the diagram's CSS transform. */
+.drawio-view-highlight {
+    position: absolute;
+    left: var(--dv-hl-x, 0px);
+    top: var(--dv-hl-y, 0px);
+    width: var(--dv-hl-w, 0px);
+    height: var(--dv-hl-h, 0px);
+    border: 2px solid var(--interactive-accent);
+    border-radius: 2px;
+    pointer-events: none;
+    display: none;
+    z-index: 5;
+    box-sizing: border-box;
+}
+
+.drawio-view-highlight.is-visible {
+    display: block;
+}
+
+/* ── Dark theme ──────────────────────────────────────────── */
+/* Invert + hue-rotate so diagrams read naturally on dark backgrounds.
+   Applied to the clipping viewport so border/HUD/tabs are unaffected. */
+.theme-dark .drawio-view-graph {
+    filter: invert(1) hue-rotate(180deg);
 }
 
 /* ── HUD (apply button + status bar) ─────────────────────── */
@@ -166,6 +197,59 @@
     outline-offset: -2px;
 }
 
+/* ── Link tooltip ────────────────────────────────────────── */
+.drawio-view-link-tooltip {
+    display: none;
+    position: absolute;
+    left: var(--dv-tip-x, 0px);
+    top: var(--dv-tip-y, 0px);
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 1px 4px 1px 5px;
+    white-space: nowrap;
+    max-width: 360px;
+    z-index: 20;
+}
+
+.drawio-view-link-tooltip.is-visible {
+    display: flex;
+}
+
+.drawio-view-tooltip-text {
+    display: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-left: 1px solid var(--background-modifier-border);
+    padding-left: 5px;
+}
+
+.drawio-view-tooltip-text.is-visible {
+    display: inline;
+}
+
+.drawio-view-tooltip-edit {
+    cursor: pointer;
+    color: var(--text-faint);
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.drawio-view-tooltip-edit:hover {
+    color: var(--interactive-accent);
+}
+
+.drawio-link-editor-path {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
 /* ── Error ───────────────────────────────────────────────── */
 .drawio-view-error {
     padding: 12px;
@@ -177,6 +261,7 @@
 /* Lives inside .drawio-view-hud, left of the status text.
    Prefix .drawio-view-hud gives enough specificity to beat Obsidian's
    button base styles (e.g. button:not(.clickable-icon) { background: … }). */
+.drawio-view-hud .drawio-view-open-btn,
 .drawio-view-hud .drawio-view-update-btn {
     pointer-events: auto;
     background: transparent;
@@ -189,11 +274,13 @@
     user-select: none;
 }
 
+.drawio-view-hud .drawio-view-open-btn:hover,
 .drawio-view-hud .drawio-view-update-btn:hover {
     color: var(--interactive-accent);
     background: transparent;
 }
 
+.drawio-view-hud .drawio-view-open-btn:focus-visible,
 .drawio-view-hud .drawio-view-update-btn:focus-visible {
     outline: 2px solid var(--interactive-accent);
     outline-offset: -2px;

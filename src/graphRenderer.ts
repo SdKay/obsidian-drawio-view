@@ -1,4 +1,4 @@
-import { Graph, ModelXmlSerializer, InternalEvent, type ShapeValue } from '@maxgraph/core';
+import { Graph, ModelXmlSerializer, InternalEvent, type ShapeValue, type Cell } from '@maxgraph/core';
 
 export interface BoundingBox {
 	x: number;
@@ -32,6 +32,16 @@ export class GraphRenderer {
 		this.graph.setTooltips(false);
 		this.graph.gridEnabled = false;
 		this.graph.setHtmlLabels(true);
+
+		// draw.io stores linked shapes as <UserObject label="..." link="...">.
+		// @maxgraph sets the XML Element as the cell value; the default
+		// convertValueToString calls String(element) which yields "[object Element]".
+		// Override to extract the 'label' attribute instead.
+		this.graph.convertValueToString = (cell: Cell): string => {
+			const val = cell.getValue() as unknown;
+			if (val instanceof Element) return val.getAttribute('label') ?? '';
+			return val != null ? String(val) : '';
+		};
 
 		// We implement our own panning in the viewer, so leave the built-in
 		// PanningHandler off to avoid conflicts with setEnabled(false).
@@ -174,6 +184,67 @@ export class GraphRenderer {
 		view.addListener(InternalEvent.TRANSLATE, callback);
 		view.addListener(InternalEvent.SCALE_AND_TRANSLATE, callback);
 		this.graph.addListener(InternalEvent.PAN, callback);
+	}
+
+	/**
+	 * Return the draw.io link href for the shape at panEl-relative pixel
+	 * coordinates (px, py), or null if there is no link.
+	 * Checks both the direct cell and its immediate parent (covers clicks on
+	 * labels or child cells whose link lives on the parent shape).
+	 */
+	getLinkAt(px: number, py: number): string | null {
+		const cell = this.graph.getCellAt(px, py);
+		if (!cell) return null;
+		return this.extractLink(cell) ?? this.extractLink(cell.getParent());
+	}
+
+	/** Return the cell ID and link for the shape at panEl-relative coordinates, or null. */
+	getCellInfoAt(px: number, py: number): { id: string; link: string } | null {
+		const cell = this.graph.getCellAt(px, py);
+		if (!cell) return null;
+		let link = this.extractLink(cell);
+		let id = link ? cell.id : null;
+		if (!link) {
+			const parent = cell.getParent();
+			link = this.extractLink(parent ?? null);
+			if (link && parent) id = parent.id;
+		}
+		if (!link || !id) return null;
+		return { id, link };
+	}
+
+	/**
+	 * Return the shape cell (id + optional link) at panEl-relative coordinates,
+	 * for ANY non-layer vertex/edge — not just linked cells.
+	 * Sub-cells (labels etc.) are resolved up to their parent shape cell.
+	 */
+	getShapeAt(px: number, py: number): { id: string; link: string | null; bounds: { x: number; y: number; w: number; h: number } } | null {
+		const cell = this.graph.getCellAt(px, py);
+		if (!cell) return null;
+		const dm = this.graph.getDataModel();
+		if (dm.isLayer(cell)) return null;
+		// If the hit cell's parent is a non-layer cell, it's a sub-cell — use the parent.
+		const parent = cell.getParent();
+		const shapeCell = (parent && !dm.isLayer(parent)) ? parent : cell;
+		const id = shapeCell.id;
+		if (!id) return null;
+		const state = this.graph.getView().getState(shapeCell);
+		if (!state) return null;
+		return { id, link: this.extractLink(shapeCell), bounds: { x: state.x, y: state.y, w: state.width, h: state.height } };
+	}
+
+	private extractLink(cell: Cell | null | undefined): string | null {
+		if (!cell || this.graph.getDataModel().isLayer(cell)) return null;
+		// UserObject format: cell value is an XML Element with a 'link' attribute.
+		const val = cell.getValue() as unknown;
+		if (val instanceof Element) {
+			const link = val.getAttribute('link') ?? val.getAttribute('href');
+			if (link) return link;
+		}
+		// Parsed style object: 'link' key survives @maxgraph's style parsing.
+		const styleLink = (cell.style as Record<string, unknown>)['link'];
+		if (typeof styleLink === 'string' && styleLink) return styleLink;
+		return null;
 	}
 
 	destroy(): void {

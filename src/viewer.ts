@@ -2,6 +2,7 @@ import { App, Component, TFile } from 'obsidian';
 import { parseDrawioCached, type ViewOptions, type DrawioPage } from './parser';
 import { GraphRenderer, type BoundingBox } from './graphRenderer';
 import type { DrawioViewSettings } from './settings';
+import { LinkEditorModal, patchCellLink } from './linkEditor';
 
 // Module-level cache of .drawio file CONTENT keyed by path.  Crucial for a
 // flash-free re-render: when the ⊙ button writes view params into the .md file,
@@ -32,6 +33,14 @@ export class DrawioViewer extends Component {
 	private statusEl: HTMLElement | null = null;
 	private tabsEl: HTMLElement | null = null;
 	private graphEl: HTMLElement | null = null;
+	private tooltipEl: HTMLElement | null = null;
+	private tooltipTextEl: HTMLElement | null = null;
+	private highlightEl: HTMLElement | null = null;
+	/** ID of the draw.io cell currently under the cursor (has a link). */
+	private hoveredCellId: string | null = null;
+	private hoveredLink: string | null = null;
+	/** Timer for delaying tooltip hide when mouse moves from graph to tooltip. */
+	private hideTooltipTimer = 0;
 	/** Inner element that @maxgraph renders into; CSS-transformed for pan/zoom. */
 	private panEl: HTMLElement | null = null;
 	// ── Visual transform layer ────────────────────────────────────────────────
@@ -48,11 +57,15 @@ export class DrawioViewer extends Component {
 	/** Pending auto-commit timer (0 = none). */
 	private commitTimer = 0;
 
+	/** Vault-relative path of the note that contains this code block. */
+	private readonly sourcePath: string;
+
 	constructor(
 		app: App,
 		container: HTMLElement,
 		options: ViewOptions,
 		settings: DrawioViewSettings,
+		sourcePath: string,
 		onUpdate?: (newParams: string) => Promise<void>,
 	) {
 		super();
@@ -60,6 +73,7 @@ export class DrawioViewer extends Component {
 		this.container = container;
 		this.options = options;
 		this.settings = settings;
+		this.sourcePath = sourcePath;
 		this.onUpdate = onUpdate ?? null;
 	}
 
@@ -122,11 +136,6 @@ export class DrawioViewer extends Component {
 					this.clearVisualTransform();
 					const bbox = this.renderer.loadXml(page.xml);
 					this.currentBbox = bbox;
-					// Re-fit if no explicit zoom was set.
-					if (this.options.zoom === 0 && this.graphEl) {
-						const rect = this.graphEl.getBoundingClientRect();
-						this.renderer.autoFit(rect.width || 600, rect.height || 380, bbox);
-					}
 					this.updateStatus();
 				}
 				return;
@@ -153,6 +162,7 @@ export class DrawioViewer extends Component {
 
 	onunload(): void {
 		if (this.commitTimer) { window.clearTimeout(this.commitTimer); this.commitTimer = 0; }
+		if (this.hideTooltipTimer) { window.clearTimeout(this.hideTooltipTimer); this.hideTooltipTimer = 0; }
 		this.renderer?.destroy();
 		this.renderer = null;
 	}
@@ -205,21 +215,27 @@ export class DrawioViewer extends Component {
 		// exists in the DOM and reappears when panned back.
 		this.graphEl = this.container.createDiv('drawio-view-graph');
 		this.panEl = this.graphEl.createDiv('drawio-view-pan');
+		this.highlightEl = this.panEl.createDiv('drawio-view-highlight');
 
 		// HUD: apply button (optional) + status text, bottom-right corner.
 		// Kept as a sibling of graphEl (not inside it) so @maxgraph's internal
 		// HTML-label overlay cannot interfere with its position.
 		const hud = this.container.createDiv('drawio-view-hud');
 
+		const openBtn = hud.createEl('span', {
+			cls: 'drawio-view-open-btn',
+			attr: { 'role': 'button', 'aria-label': 'Open in external editor', 'tabindex': '0' },
+		});
+		openBtn.setText('↗');
+		this.registerDomEvent(openBtn, 'click', () => { this.openExternal(); });
+		this.registerDomEvent(openBtn, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.openExternal(); }
+		});
+
 		if (this.onUpdate) {
 			const btn = hud.createEl('span', {
 				cls: 'drawio-view-update-btn',
-				attr: {
-					'role': 'button',
-					'aria-label': 'Apply current view to code block',
-					'title': 'Apply current view to code block',
-					'tabindex': '0',
-				},
+				attr: { 'role': 'button', 'aria-label': 'Apply current view to code block', 'tabindex': '0' },
 			});
 			btn.setText('⊙');
 			this.registerDomEvent(btn, 'click', () => {
@@ -243,6 +259,35 @@ export class DrawioViewer extends Component {
 			this.tabsEl.setAttribute('role', 'tablist');
 			this.buildTabs();
 		}
+
+		this.tooltipEl = this.container.createDiv('drawio-view-link-tooltip');
+		const tooltipEditBtn = this.tooltipEl.createEl('span', {
+			cls: 'drawio-view-tooltip-edit',
+			attr: { role: 'button', tabindex: '0', 'aria-label': 'Edit link' },
+		});
+		this.tooltipTextEl = this.tooltipEl.createEl('span', { cls: 'drawio-view-tooltip-text' });
+		tooltipEditBtn.setText('✎');
+		this.registerDomEvent(tooltipEditBtn, 'click', (e: MouseEvent) => {
+			e.stopPropagation();
+			const cellId = this.hoveredCellId;
+			if (!cellId) return;
+			new LinkEditorModal(this.app, this.hoveredLink ?? '', (newLink) => {
+				this.updateCellLink(cellId, newLink).catch(
+					(err: unknown) => console.error('DrawioViewer link edit:', err),
+				);
+			}).open();
+		});
+		this.registerDomEvent(tooltipEditBtn, 'keydown', (e: KeyboardEvent) => {
+			if (e.key !== 'Enter' && e.key !== ' ') return;
+			e.preventDefault();
+			const cellId = this.hoveredCellId;
+			if (!cellId) return;
+			new LinkEditorModal(this.app, this.hoveredLink ?? '', (newLink) => {
+				this.updateCellLink(cellId, newLink).catch(
+					(err: unknown) => console.error('DrawioViewer link edit:', err),
+				);
+			}).open();
+		});
 
 		// Bottom-edge resize handle — drag to change the viewer height.
 		this.buildResizeHandle();
@@ -426,11 +471,6 @@ export class DrawioViewer extends Component {
 	}
 
 	private setupInteraction(graphEl: HTMLElement): void {
-		// Stop click propagation (prevents Obsidian embed from opening file).
-		this.registerDomEvent(graphEl, 'click', (e: MouseEvent) => {
-			e.stopPropagation();
-		}, true);
-
 		// Double-click → reset view.
 		this.registerDomEvent(graphEl, 'dblclick', (e: MouseEvent) => {
 			e.preventDefault();
@@ -441,7 +481,6 @@ export class DrawioViewer extends Component {
 		const panEl = this.panEl!;
 		let applyRaf = 0;
 
-		/** Schedule one CSS transform write + status update per frame. */
 		const scheduleApply = () => {
 			if (applyRaf) return;
 			applyRaf = window.requestAnimationFrame(() => {
@@ -451,10 +490,6 @@ export class DrawioViewer extends Component {
 			});
 		};
 
-		// ── flushView: fold the visual CSS transform into @maxgraph ───────────
-		// screenFinal(X) = (vTx,vTy) + vScale·[X·S0 + D0]
-		//                = X·(vScale·S0) + (vTx + vScale·D0)
-		// So committed scale Sf = vScale·S0, display offset Df = vT + vScale·D0.
 		this.flushView = () => {
 			if (!this.renderer) return;
 			if (this.vScale === 1 && this.vTx === 0 && this.vTy === 0) return;
@@ -468,23 +503,6 @@ export class DrawioViewer extends Component {
 			this.renderer.setViewFromDisplay(sf * 100, dfx, dfy);
 		};
 
-		// ── Unified commit scheduling (idle-driven) ───────────────────────────
-		// The @maxgraph commit (flushView) is expensive and, once started, runs
-		// synchronously to completion — it cannot be interrupted mid-render.  So
-		// the goal is to never START it while the user might still be acting.
-		//
-		// We use requestIdleCallback: the browser invokes it ONLY during genuine
-		// idle time, when there is no pending user input.  As long as you keep
-		// panning/zooming, every new gesture cancels the pending callback, so the
-		// render is repeatedly postponed and interaction stays entirely on the
-		// CSS/GPU layer.  The real render fires exactly once — during the first
-		// idle gap after you truly stop — so it can never land inside a gesture.
-		//
-		// ── Commit scheduling ─────────────────────────────────────────────────
-		// setViewFromDisplay (via flushView) now detaches panEl from the DOM
-		// during the @maxgraph redraw, preventing cascading MutationObserver
-		// calls from other plugins.  The render should be ~100 ms instead of
-		// 3-4 s, making a 600 ms idle-delay safe and unnoticeable to users.
 		const cancelCommit = () => {
 			if (!this.commitTimer) return;
 			window.clearTimeout(this.commitTimer);
@@ -500,11 +518,9 @@ export class DrawioViewer extends Component {
 			}, 0);
 		};
 
-		// ── Wheel zoom — CSS scale during gesture ─────────────────────────────
+		// ── Wheel zoom ────────────────────────────────────────────────────────
 		this.registerDomEvent(graphEl, 'wheel', (e: WheelEvent) => {
-			if (this.settings.zoomModifier === 'ctrl' && !e.ctrlKey && !e.metaKey) {
-				return;
-			}
+			if (this.settings.zoomModifier === 'ctrl' && !e.ctrlKey && !e.metaKey) return;
 			e.preventDefault();
 			e.stopPropagation();
 			cancelCommit();
@@ -520,8 +536,12 @@ export class DrawioViewer extends Component {
 			scheduleCommit();
 		}, { passive: false, capture: true });
 
-		// ── Pan — CSS translate ───────────────────────────────────────────────
+		// ── Pan + link navigation ─────────────────────────────────────────────
+		// panModifier='none' (default): plain drag=pan, Ctrl+click=follow link.
+		// panModifier='ctrl':           Ctrl+drag=pan, plain click=follow link.
 		let dragging = false;
+		let mouseDownActive = false;
+		let hasDragged = false;
 		let dragStartX = 0, dragStartY = 0;
 		let dragBaseTx = 0, dragBaseTy = 0;
 
@@ -529,30 +549,149 @@ export class DrawioViewer extends Component {
 			if (e.button !== 0) return;
 			e.preventDefault();
 			e.stopPropagation();
-			cancelCommit();
-			dragging = true;
+			hasDragged = false;
+			mouseDownActive = true;
 			dragStartX = e.clientX;
 			dragStartY = e.clientY;
-			dragBaseTx = this.vTx;
-			dragBaseTy = this.vTy;
-			graphEl.addClass('is-grabbing');
-			panEl.addClass('is-panning');
+			cancelCommit();
+			// In 'ctrl' mode only start panning when Ctrl/Cmd is held.
+			const shouldPan = this.settings.panModifier === 'none' || e.ctrlKey || e.metaKey;
+			if (shouldPan) {
+				dragging = true;
+				dragBaseTx = this.vTx;
+				dragBaseTy = this.vTy;
+				graphEl.addClass('is-grabbing');
+				panEl.addClass('is-panning');
+			}
 		}, true);
 
 		this.registerDomEvent(activeDocument, 'mousemove', (e: MouseEvent) => {
+			if (!mouseDownActive) return;
+			const dx = e.clientX - dragStartX;
+			const dy = e.clientY - dragStartY;
+			if (Math.abs(dx) > 4 || Math.abs(dy) > 4) hasDragged = true;
 			if (!dragging) return;
-			this.vTx = dragBaseTx + (e.clientX - dragStartX);
-			this.vTy = dragBaseTy + (e.clientY - dragStartY);
+			this.vTx = dragBaseTx + dx;
+			this.vTy = dragBaseTy + dy;
 			scheduleApply();
 		});
 
 		this.registerDomEvent(activeDocument, 'mouseup', () => {
+			mouseDownActive = false;
 			if (!dragging) return;
 			dragging = false;
 			graphEl.removeClass('is-grabbing');
 			scheduleCommit();
 			this.updateStatus();
 		});
+
+		// ── Hover cursor + link tooltip ───────────────────────────────────────
+		let hoverRaf = 0;
+		this.registerDomEvent(graphEl, 'mousemove', (e: MouseEvent) => {
+			if (hoverRaf || !this.renderer) return;
+			const clientX = e.clientX;
+			const clientY = e.clientY;
+			hoverRaf = window.requestAnimationFrame(() => {
+				hoverRaf = 0;
+				if (!this.renderer) return;
+				const rect = graphEl.getBoundingClientRect();
+				const panX = (clientX - rect.left - this.vTx) / this.vScale;
+				const panY = (clientY - rect.top  - this.vTy) / this.vScale;
+				const shape = this.renderer.getShapeAt(panX, panY);
+				graphEl.toggleClass('has-link-hover', shape?.link != null);
+				// Only reposition the tooltip when entering a new cell — keeps it
+				// frozen in place so the user can move the cursor to reach it.
+				if (shape?.id !== this.hoveredCellId) {
+					this.hoveredCellId = shape?.id ?? null;
+					this.hoveredLink   = shape?.link ?? null;
+					if (shape && this.highlightEl) {
+						this.highlightEl.setCssProps({
+							'--dv-hl-x': `${Math.round(shape.bounds.x)}px`,
+							'--dv-hl-y': `${Math.round(shape.bounds.y)}px`,
+							'--dv-hl-w': `${Math.round(shape.bounds.w)}px`,
+							'--dv-hl-h': `${Math.round(shape.bounds.h)}px`,
+						});
+						this.highlightEl.addClass('is-visible');
+					} else {
+						this.highlightEl?.removeClass('is-visible');
+					}
+					if (shape && this.tooltipEl && this.tooltipTextEl) {
+						window.clearTimeout(this.hideTooltipTimer);
+						if (shape.link) {
+							const action = this.settings.panModifier === 'none' ? 'Ctrl+click' : 'Click';
+							const label = shape.link.length > 60 ? shape.link.slice(0, 57) + '…' : shape.link;
+							this.tooltipTextEl.setText(`${action} to open: ${label}`);
+							this.tooltipTextEl.addClass('is-visible');
+						} else {
+							this.tooltipTextEl.setText('');
+							this.tooltipTextEl.removeClass('is-visible');
+						}
+						const cRect = this.container.getBoundingClientRect();
+						this.tooltipEl.setCssProps({
+							'--dv-tip-x': `${Math.round(clientX - cRect.left + 12)}px`,
+							'--dv-tip-y': `${Math.round(clientY - cRect.top  + 16)}px`,
+						});
+						this.tooltipEl.addClass('is-visible');
+					} else {
+						this.tooltipEl?.removeClass('is-visible');
+					}
+				}
+			});
+		});
+		// Delay hiding the tooltip so the user can move the mouse onto the ✎ button.
+		this.registerDomEvent(graphEl, 'mouseleave', () => {
+			graphEl.removeClass('has-link-hover');
+			this.highlightEl?.removeClass('is-visible');
+			this.hideTooltipTimer = window.setTimeout(() => {
+				this.tooltipEl?.removeClass('is-visible');
+			}, 400);
+		});
+		if (this.tooltipEl) {
+			this.registerDomEvent(this.tooltipEl, 'mouseenter', () => {
+				window.clearTimeout(this.hideTooltipTimer);
+			});
+			this.registerDomEvent(this.tooltipEl, 'mouseleave', () => {
+				this.tooltipEl?.removeClass('is-visible');
+			});
+		}
+
+		// Click: stop embed propagation; follow link when appropriate.
+		this.registerDomEvent(graphEl, 'click', (e: MouseEvent) => {
+			e.stopPropagation();
+			if (hasDragged || !this.renderer) return;
+			const ctrlHeld = e.ctrlKey || e.metaKey;
+			// pan-first: Ctrl+click follows link; link-first: plain click follows link.
+			const shouldFollow = this.settings.panModifier === 'none' ? ctrlHeld : !ctrlHeld;
+			if (!shouldFollow) return;
+			const rect = graphEl.getBoundingClientRect();
+			const panX = (e.clientX - rect.left - this.vTx) / this.vScale;
+			const panY = (e.clientY - rect.top  - this.vTy) / this.vScale;
+			const link = this.renderer.getLinkAt(panX, panY);
+			if (link) this.navigateLink(link);
+		}, true);
+	}
+
+	private openExternal(): void {
+		// openWithDefaultApp is a runtime-only method not exposed in Obsidian's types.
+		(this.app as unknown as { openWithDefaultApp(p: string): Promise<void> })
+			.openWithDefaultApp(this.options.filename)
+			.catch((err: unknown) => console.error('DrawioViewer open:', err));
+	}
+
+	private async updateCellLink(cellId: string, link: string): Promise<void> {
+		const file = this.resolveFile(this.options.filename);
+		if (!file) return;
+		await this.app.vault.process(file, content => patchCellLink(content, cellId, link));
+	}
+
+	private navigateLink(href: string): void {
+		if (/^https?:\/\//i.test(href)) {
+			window.open(href, '_blank');
+			return;
+		}
+		// Strip [[...]] wikilink brackets if present, then let Obsidian resolve.
+		const cleaned = href.replace(/^\[\[(.+)\]\]$/, '$1');
+		void this.app.workspace.openLinkText(cleaned, this.sourcePath, false);
 	}
 
 	private resetView(): void {
