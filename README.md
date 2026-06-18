@@ -64,7 +64,8 @@ skb.drawio|my_page|80%|(190, 34)
 | **Left-click drag** | Pan the diagram |
 | **Double-click** | Reset to the initial view (parameters or auto-fit) |
 | **Drag bottom edge** | Resize the viewer height (written back automatically) |
-| **⊙ button** (bottom-left) | Write the current page / zoom / offset back into the code block |
+| **↗ button** (bottom-right HUD) | Open the `.drawio` file in the system default editor (e.g. draw.io desktop) |
+| **⊙ button** (bottom-right HUD) | Write the current page / zoom / offset back into the code block |
 | **Tab bar** (bottom, multi-page only) | Switch between diagram pages |
 
 The **⊙ button** is the easiest way to set default parameters: pan and zoom to the view you want, then click ⊙. The code block in your note is updated in-place with the current values, so that view is restored on the next open.
@@ -75,11 +76,32 @@ Pan and zoom are GPU-composited and committed to the renderer only when you stop
 
 ---
 
+## Shape links
+
+Shapes can carry links to URLs or vault notes. Hover over any shape to see a tooltip and a **✎** button.
+
+- **Click ✎** to add or edit the link on a shape. A fuzzy search modal opens:
+  - Type to search vault notes by name or path.
+  - Type a full `https://` URL to use it directly.
+  - The existing link is pre-filled so you can refine it.
+- **Follow a link** by clicking the shape (exact key depends on the *Click behavior* setting — see Settings below).
+
+Links are written directly into the `.drawio` file and survive round-trips through the draw.io desktop app.
+
+---
+
+## Dark mode
+
+The viewer automatically inverts diagrams when Obsidian switches to a dark theme, keeping white backgrounds and black text readable without any configuration.
+
+---
+
 ## Settings
 
 | Setting | Options | Description |
 |---------|---------|-------------|
 | **Zoom modifier key** | Scroll wheel / Ctrl + scroll wheel | How the scroll wheel zooms. Choose **Ctrl + scroll wheel** so plain scrolling moves through the note instead of zooming the diagram under the cursor. |
+| **Click behavior** | Drag to pan · Ctrl+click to follow links / Click to follow links · Ctrl+drag to pan | Controls how clicking and dragging interact with shape links. |
 
 ---
 
@@ -131,20 +153,6 @@ Requires Node.js 18+.
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=SdKay/obsidian-drawio-view&type=Date)](https://star-history.com/#SdKay/obsidian-drawio-view&Date)
-
----
-
-## Support
-
-If this plugin saves you time, a coffee is always welcome ☕
-
-<div align="center">
-
-| Alipay | WeChat |
-|:------:|:------:|
-| <img src="alipay.jpg" width="180"/> | <img src="wechat.jpg" width="180"/> |
-
-</div>
 
 ---
 
