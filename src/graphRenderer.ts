@@ -40,7 +40,8 @@ export class GraphRenderer {
 		this.graph.convertValueToString = (cell: Cell): string => {
 			const val = cell.getValue() as unknown;
 			if (val instanceof Element) return val.getAttribute('label') ?? '';
-			return val != null ? String(val) : '';
+			// draw.io cell labels are plain strings; anything else has no label.
+			return typeof val === 'string' ? val : '';
 		};
 
 		// We implement our own panning in the viewer, so leave the built-in

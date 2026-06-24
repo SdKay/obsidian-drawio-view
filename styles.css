@@ -46,6 +46,9 @@
     flex: 1;
     min-height: 0;
     background: transparent;
+    /* Claim all touch gestures so the browser never steals pinch/drag for
+       native scroll or zoom — pan/zoom is handled via Pointer Events. */
+    touch-action: none;
 }
 
 .drawio-view-graph.has-link-hover {

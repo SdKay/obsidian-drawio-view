@@ -14,7 +14,7 @@ export class LinkEditorModal extends SuggestModal<LinkItem> {
 	}
 
 	onOpen(): void {
-		super.onOpen();
+		void super.onOpen();
 		if (this.currentLink) {
 			// Strip [[...]] so the bare path is shown and matched correctly.
 			this.inputEl.value = this.currentLink.replace(/^\[\[(.+)\]\]$/, '$1');

@@ -3,6 +3,7 @@ import { parseDrawioCached, type ViewOptions, type DrawioPage } from './parser';
 import { GraphRenderer, type BoundingBox } from './graphRenderer';
 import type { DrawioViewSettings } from './settings';
 import { LinkEditorModal, patchCellLink } from './linkEditor';
+import { PanZoomController, type ViewportHost } from './viewportController';
 
 // Module-level cache of .drawio file CONTENT keyed by path.  Crucial for a
 // flash-free re-render: when the ⊙ button writes view params into the .md file,
@@ -43,19 +44,8 @@ export class DrawioViewer extends Component {
 	private hideTooltipTimer = 0;
 	/** Inner element that @maxgraph renders into; CSS-transformed for pan/zoom. */
 	private panEl: HTMLElement | null = null;
-	// ── Visual transform layer ────────────────────────────────────────────────
-	// A CSS transform applied to panEl that represents pan/zoom adjustments NOT
-	// yet committed to @maxgraph.  transform-origin is 0 0, so the mapping is:
-	//   screenFinal(X) = (vTx, vTy) + vScale · screenMaxgraph(X)
-	// Panning updates vTx/vTy; zooming updates vScale (and vTx/vTy to keep the
-	// cursor anchored).  flushView() folds these into @maxgraph in one redraw.
-	private vScale = 1;
-	private vTx = 0;
-	private vTy = 0;
-	/** Fold the visual CSS transform into @maxgraph (one redraw) and clear it. */
-	private flushView: () => void = () => {};
-	/** Pending auto-commit timer (0 = none). */
-	private commitTimer = 0;
+	/** Owns all viewport pan/zoom (mouse, touch, wheel) and the visual transform. */
+	private controller: PanZoomController | null = null;
 
 	/** Vault-relative path of the note that contains this code block. */
 	private readonly sourcePath: string;
@@ -132,8 +122,7 @@ export class DrawioViewer extends Component {
 				this.pages = drawio.pages;
 				const page = this.pages[this.currentPage];
 				if (page) {
-					this.vScale = 1; this.vTx = 0; this.vTy = 0;
-					this.clearVisualTransform();
+					this.controller?.clearVisual();
 					const bbox = this.renderer.loadXml(page.xml);
 					this.currentBbox = bbox;
 					this.updateStatus();
@@ -161,7 +150,6 @@ export class DrawioViewer extends Component {
 	}
 
 	onunload(): void {
-		if (this.commitTimer) { window.clearTimeout(this.commitTimer); this.commitTimer = 0; }
 		if (this.hideTooltipTimer) { window.clearTimeout(this.hideTooltipTimer); this.hideTooltipTimer = 0; }
 		this.renderer?.destroy();
 		this.renderer = null;
@@ -175,6 +163,7 @@ export class DrawioViewer extends Component {
 		// Clear any previous render (e.g. background re-render after a change).
 		this.renderer?.destroy();
 		this.renderer = null;
+		if (this.controller) { this.removeChild(this.controller); this.controller = null; }
 		this.container.empty();
 		this.graphEl = this.panEl = this.statusEl = this.tabsEl = null;
 
@@ -378,16 +367,23 @@ export class DrawioViewer extends Component {
 		const page = this.pages[this.currentPage];
 		if (!page) return;
 
-		// Create renderer once (into panEl); reuse for page switches.
+		// Create renderer + controller once (into panEl); reuse for page switches.
 		if (!this.renderer) {
 			this.renderer = new GraphRenderer(panEl);
 			this.renderer.onViewChange(() => this.updateStatus());
+			const host: ViewportHost = {
+				getCommittedScale: () => this.renderer?.getScale() ?? 1,
+				getCommittedOffset: () => this.renderer?.getDisplayOffset() ?? { x: 0, y: 0 },
+				commitView: (z, dx, dy) => this.renderer?.setViewFromDisplay(z, dx, dy),
+				onViewChange: () => this.updateStatus(),
+			};
+			this.controller = new PanZoomController(graphEl, panEl, host, () => this.settings);
+			this.addChild(this.controller);
 			this.setupInteraction(graphEl);
 		}
 
 		// Reset the visual CSS transform when (re)loading a page.
-		this.vScale = 1; this.vTx = 0; this.vTy = 0;
-		this.clearVisualTransform();
+		this.controller?.clearVisual();
 
 		const bbox = this.renderer.loadXml(page.xml);
 		this.currentBbox = bbox;
@@ -478,112 +474,8 @@ export class DrawioViewer extends Component {
 			this.resetView();
 		}, true);
 
-		const panEl = this.panEl!;
-		let applyRaf = 0;
-
-		const scheduleApply = () => {
-			if (applyRaf) return;
-			applyRaf = window.requestAnimationFrame(() => {
-				applyRaf = 0;
-				this.applyVisualTransform();
-				this.updateStatus();
-			});
-		};
-
-		this.flushView = () => {
-			if (!this.renderer) return;
-			if (this.vScale === 1 && this.vTx === 0 && this.vTy === 0) return;
-			const s0 = this.renderer.getScale();
-			const d0 = this.renderer.getDisplayOffset();
-			const sf = this.vScale * s0;
-			const dfx = this.vTx + this.vScale * d0.x;
-			const dfy = this.vTy + this.vScale * d0.y;
-			this.vScale = 1; this.vTx = 0; this.vTy = 0;
-			this.clearVisualTransform();
-			this.renderer.setViewFromDisplay(sf * 100, dfx, dfy);
-		};
-
-		const cancelCommit = () => {
-			if (!this.commitTimer) return;
-			window.clearTimeout(this.commitTimer);
-			this.commitTimer = 0;
-		};
-		const scheduleCommit = () => {
-			cancelCommit();
-			if (this.vScale === 1) { panEl.removeClass('is-panning'); return; }
-			this.commitTimer = window.setTimeout(() => {
-				this.commitTimer = 0;
-				panEl.removeClass('is-panning');
-				this.flushView();
-			}, 0);
-		};
-
-		// ── Wheel zoom ────────────────────────────────────────────────────────
-		this.registerDomEvent(graphEl, 'wheel', (e: WheelEvent) => {
-			if (this.settings.zoomModifier === 'ctrl' && !e.ctrlKey && !e.metaKey) return;
-			e.preventDefault();
-			e.stopPropagation();
-			cancelCommit();
-			const f = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-			const rect = graphEl.getBoundingClientRect();
-			const cx = e.clientX - rect.left;
-			const cy = e.clientY - rect.top;
-			this.vTx = f * this.vTx + cx * (1 - f);
-			this.vTy = f * this.vTy + cy * (1 - f);
-			this.vScale *= f;
-			panEl.addClass('is-panning');
-			scheduleApply();
-			scheduleCommit();
-		}, { passive: false, capture: true });
-
-		// ── Pan + link navigation ─────────────────────────────────────────────
-		// panModifier='none' (default): plain drag=pan, Ctrl+click=follow link.
-		// panModifier='ctrl':           Ctrl+drag=pan, plain click=follow link.
-		let dragging = false;
-		let mouseDownActive = false;
-		let hasDragged = false;
-		let dragStartX = 0, dragStartY = 0;
-		let dragBaseTx = 0, dragBaseTy = 0;
-
-		this.registerDomEvent(graphEl, 'mousedown', (e: MouseEvent) => {
-			if (e.button !== 0) return;
-			e.preventDefault();
-			e.stopPropagation();
-			hasDragged = false;
-			mouseDownActive = true;
-			dragStartX = e.clientX;
-			dragStartY = e.clientY;
-			cancelCommit();
-			// In 'ctrl' mode only start panning when Ctrl/Cmd is held.
-			const shouldPan = this.settings.panModifier === 'none' || e.ctrlKey || e.metaKey;
-			if (shouldPan) {
-				dragging = true;
-				dragBaseTx = this.vTx;
-				dragBaseTy = this.vTy;
-				graphEl.addClass('is-grabbing');
-				panEl.addClass('is-panning');
-			}
-		}, true);
-
-		this.registerDomEvent(activeDocument, 'mousemove', (e: MouseEvent) => {
-			if (!mouseDownActive) return;
-			const dx = e.clientX - dragStartX;
-			const dy = e.clientY - dragStartY;
-			if (Math.abs(dx) > 4 || Math.abs(dy) > 4) hasDragged = true;
-			if (!dragging) return;
-			this.vTx = dragBaseTx + dx;
-			this.vTy = dragBaseTy + dy;
-			scheduleApply();
-		});
-
-		this.registerDomEvent(activeDocument, 'mouseup', () => {
-			mouseDownActive = false;
-			if (!dragging) return;
-			dragging = false;
-			graphEl.removeClass('is-grabbing');
-			scheduleCommit();
-			this.updateStatus();
-		});
+		// Pan / zoom / pinch are owned by PanZoomController (created alongside the
+		// renderer in renderCurrentPage).  What remains here is hover + link follow.
 
 		// ── Hover cursor + link tooltip ───────────────────────────────────────
 		let hoverRaf = 0;
@@ -594,9 +486,10 @@ export class DrawioViewer extends Component {
 			hoverRaf = window.requestAnimationFrame(() => {
 				hoverRaf = 0;
 				if (!this.renderer) return;
+				const v = this.controller?.getVisual() ?? { scale: 1, tx: 0, ty: 0 };
 				const rect = graphEl.getBoundingClientRect();
-				const panX = (clientX - rect.left - this.vTx) / this.vScale;
-				const panY = (clientY - rect.top  - this.vTy) / this.vScale;
+				const panX = (clientX - rect.left - v.tx) / v.scale;
+				const panY = (clientY - rect.top  - v.ty) / v.scale;
 				const shape = this.renderer.getShapeAt(panX, panY);
 				graphEl.toggleClass('has-link-hover', shape?.link != null);
 				// Only reposition the tooltip when entering a new cell — keeps it
@@ -658,14 +551,15 @@ export class DrawioViewer extends Component {
 		// Click: stop embed propagation; follow link when appropriate.
 		this.registerDomEvent(graphEl, 'click', (e: MouseEvent) => {
 			e.stopPropagation();
-			if (hasDragged || !this.renderer) return;
+			if (this.controller?.didGesture || !this.renderer) return;
 			const ctrlHeld = e.ctrlKey || e.metaKey;
 			// pan-first: Ctrl+click follows link; link-first: plain click follows link.
 			const shouldFollow = this.settings.panModifier === 'none' ? ctrlHeld : !ctrlHeld;
 			if (!shouldFollow) return;
+			const v = this.controller?.getVisual() ?? { scale: 1, tx: 0, ty: 0 };
 			const rect = graphEl.getBoundingClientRect();
-			const panX = (e.clientX - rect.left - this.vTx) / this.vScale;
-			const panY = (e.clientY - rect.top  - this.vTy) / this.vScale;
+			const panX = (e.clientX - rect.left - v.tx) / v.scale;
+			const panY = (e.clientY - rect.top  - v.ty) / v.scale;
 			const link = this.renderer.getLinkAt(panX, panY);
 			if (link) this.navigateLink(link);
 		}, true);
@@ -697,8 +591,7 @@ export class DrawioViewer extends Component {
 	private resetView(): void {
 		if (!this.renderer || !this.graphEl) return;
 		// Clear the visual CSS transform — the view is set directly in @maxgraph.
-		this.vScale = 1; this.vTx = 0; this.vTy = 0;
-		this.clearVisualTransform();
+		this.controller?.clearVisual();
 		if (this.options.zoom > 0) {
 			this.renderer.setViewFromDisplay(this.defaultZoom, this.defaultDisplayX, this.defaultDisplayY);
 		} else {
@@ -717,30 +610,13 @@ export class DrawioViewer extends Component {
 
 	/** Effective scale including the uncommitted visual zoom. */
 	private currentScale(): number {
-		return (this.renderer?.getScale() ?? 1) * this.vScale;
+		return (this.renderer?.getScale() ?? 1) * (this.controller?.getVisual().scale ?? 1);
 	}
 
 	/** Effective visible offset = vT + vScale · @maxgraph display offset. */
 	private currentDisplayOffset(): { x: number; y: number } {
 		const base = this.renderer?.getDisplayOffset() ?? { x: 0, y: 0 };
-		return { x: this.vTx + this.vScale * base.x, y: this.vTy + this.vScale * base.y };
-	}
-
-	/**
-	 * Write the visual pan/zoom as CSS custom properties on the pan element.
-	 * The `transform` itself lives in styles.css (`.drawio-view-pan`), reading
-	 * these vars — so we never assign element.style directly.
-	 */
-	private applyVisualTransform(): void {
-		this.panEl?.setCssProps({
-			'--dv-tx': `${this.vTx}px`,
-			'--dv-ty': `${this.vTy}px`,
-			'--dv-scale': `${this.vScale}`,
-		});
-	}
-
-	/** Reset the visual transform vars to identity. */
-	private clearVisualTransform(): void {
-		this.panEl?.setCssProps({ '--dv-tx': '0px', '--dv-ty': '0px', '--dv-scale': '1' });
+		const v = this.controller?.getVisual() ?? { scale: 1, tx: 0, ty: 0 };
+		return { x: v.tx + v.scale * base.x, y: v.ty + v.scale * base.y };
 	}
 }
