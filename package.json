@@ -1,6 +1,6 @@
 {
     "name": "drawio-view",
-    "version": "0.0.6",
+    "version": "0.0.7",
     "description": "Render draw.io diagrams in Obsidian notes.",
     "main": "main.js",
     "type": "module",

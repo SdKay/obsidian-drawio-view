@@ -64,6 +64,12 @@ export class GraphRenderer {
 			stylesheet.putCellStyle(name, { shape: name });
 		}
 
+		// draw.io group containers use style="group" — an invisible logical
+		// wrapper.  @maxgraph has no built-in 'group' base style, so it falls
+		// back to the default vertex style and paints an unwanted white box with
+		// a black border around every grouped selection.  Register it transparent.
+		stylesheet.putCellStyle('group', { fillColor: 'transparent', strokeColor: 'transparent' });
+
 		// @maxgraph's built-in default vertex style has fillColor:#C3D9FF,
 		// strokeColor:#6482B9, fontColor:#774400 — these are NOT draw.io's
 		// defaults and cause unwanted blue fills and coloured borders/text on
