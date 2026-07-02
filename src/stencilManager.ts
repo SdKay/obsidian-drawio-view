@@ -42,7 +42,7 @@ export const OFFICIAL_LIBS: LibEntry[] = [
 	{ name: 'Infographics',               file: 'infographic', category: 'General' },
 	{ name: 'Signs / Wayfinding',         file: 'signs',       category: 'General' },
 	{ name: 'Lean Mapping',               file: 'lean_mapping',category: 'General' },
-	{ name: 'Electrical',                 file: 'electrical',  category: 'General' },
+	// Note: electrical and P&ID use subdirectory structures in draw.io, not single files.
 	{ name: 'P&ID',                       file: 'pid',         category: 'General' },
 ];
 
@@ -156,6 +156,41 @@ class StencilManager {
 		const dataUri = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
 		imageDataUriCache.set(relPath, dataUri);
 		return dataUri;
+	}
+
+	/**
+	 * Detect, load and register all stencil libs needed by a page.
+	 * Automatically downloads any lib not found locally.
+	 * Returns the final set of loaded lib stems and any that failed.
+	 * Used by the viewer for fully automatic lib management.
+	 */
+	async loadAndRegisterLibs(
+		libs: string[],
+		adapter: DataAdapter,
+		stencilsDir: string,
+		userDir: string | null,
+	): Promise<{ loaded: string[]; failed: string[] }> {
+		const loaded: string[] = [];
+		const failed: string[] = [];
+		for (const lib of libs) {
+			// Skip if already registered in this session.
+			if (StencilShapeRegistry.get(lib)) { loaded.push(lib); continue; }
+			let content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
+			if (content === null) {
+				// Not on disk — try downloading automatically.
+				try {
+					await this.downloadLib(lib, adapter, stencilsDir);
+					content = await adapter.read(normalizePath(`${stencilsDir}/${lib}.xml`));
+				} catch {
+					console.error(`drawio-view: failed to download ${lib}.xml`);
+					failed.push(lib);
+					continue;
+				}
+			}
+			this.registerXml(content);
+			loaded.push(lib);
+		}
+		return { loaded, failed };
 	}
 
 	/**

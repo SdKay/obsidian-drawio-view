@@ -105,7 +105,8 @@ export function parseViewParams(paramStr: string, filenameDefault = ''): ViewOpt
 	const opts: ViewOptions = { filename: filenameDefault, ...DEFAULTS };
 	if (!paramStr.trim()) return opts;
 
-	for (const raw of paramStr.split('|').map(s => s.trim()).filter(Boolean)) {
+	// Split on both '|' and newlines so libs: can live on its own line.
+	for (const raw of paramStr.split(/[|\n\r]+/).map(s => s.trim()).filter(Boolean)) {
 		if (/\.(drawio|xml)$/i.test(raw)) {
 			opts.filename = raw;
 		} else if (/^page[-\s]?(\d+)$/i.test(raw)) {
@@ -114,6 +115,9 @@ export function parseViewParams(paramStr: string, filenameDefault = ''): ViewOpt
 			if (m) opts.pageIndex = parseInt(m[1]!) - 1;
 		} else if (/^(\d+(?:\.\d+)?)%$/.test(raw)) {
 			opts.zoom = parseFloat(raw);
+		} else if (/^libs:/i.test(raw)) {
+			// Accept "libs:aws4,azure" or "libs: aws4, azure"
+			opts.libs = raw.replace(/^libs:\s*/i, '').split(',').map(s => s.trim()).filter(Boolean);
 		} else {
 			const offsetM = raw.match(/^\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)$/);
 			if (offsetM) {
@@ -123,8 +127,6 @@ export function parseViewParams(paramStr: string, filenameDefault = ''): ViewOpt
 			} else if (/^\d+px$/i.test(raw)) {
 				// Height: "600px"
 				opts.height = parseInt(raw);
-			} else if (/^libs:/i.test(raw)) {
-				opts.libs = raw.slice(5).split(',').map(s => s.trim()).filter(Boolean);
 			} else {
 				// Treat as page name (e.g. "my_page", "第 1 页")
 				opts.pageName = raw;
