@@ -294,3 +294,163 @@
     display: block;
     width: 100%;
 }
+
+/* ── Stencil warning button ──────────────────────────────── */
+.drawio-view-stencil-btn {
+    display: none;
+    pointer-events: auto;
+    background: transparent;
+    border-right: 1px solid var(--background-modifier-border);
+    padding: 1px 6px;
+    cursor: pointer;
+    color: var(--color-orange);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.4;
+    user-select: none;
+}
+
+.drawio-view-stencil-btn.is-visible {
+    display: inline;
+}
+
+.drawio-view-stencil-btn:hover {
+    color: var(--interactive-accent);
+}
+
+/* ── Stencil sync panel ──────────────────────────────────── */
+.drawio-view-stencil-panel {
+    display: none;
+    position: absolute;
+    bottom: 32px;
+    right: 6px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 8px 10px;
+    z-index: 20;
+    min-width: 240px;
+    font-size: var(--font-ui-small);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.drawio-view-container.has-tabs .drawio-view-stencil-panel {
+    bottom: 60px;
+}
+
+.drawio-view-stencil-panel.is-visible {
+    display: block;
+}
+
+.drawio-stencil-panel-title {
+    font-weight: var(--font-semibold);
+    margin-bottom: 6px;
+    color: var(--text-normal);
+}
+
+.drawio-stencil-panel-section {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    margin: 6px 0 2px;
+}
+
+.drawio-stencil-panel-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    color: var(--text-normal);
+}
+
+.drawio-stencil-action-btn {
+    font-size: var(--font-ui-smaller);
+    padding: 1px 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    white-space: nowrap;
+    user-select: none;
+}
+
+.drawio-stencil-action-btn:hover {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+}
+
+.drawio-stencil-fix-all {
+    margin-top: 8px;
+    width: 100%;
+    text-align: center;
+    display: block;
+    padding: 3px 0;
+}
+
+/* ── Settings: Shape Libraries section ───────────────────── */
+.drawio-libs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 12px 0 6px;
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+}
+
+.drawio-libs-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.drawio-libs-list {
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 4px 0;
+}
+
+.drawio-libs-category {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 4px 10px 2px;
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.drawio-lib-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 10px;
+    font-size: var(--font-ui-small);
+}
+
+.drawio-lib-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.drawio-lib-name {
+    flex: 1;
+    color: var(--text-normal);
+}
+
+.drawio-lib-file {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+
+.drawio-lib-badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: var(--radius-s);
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.drawio-lib-badge.is-downloaded {
+    background: color-mix(in srgb, var(--color-green) 20%, transparent);
+    color: var(--color-green);
+}
