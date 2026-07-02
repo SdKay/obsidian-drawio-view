@@ -1,4 +1,5 @@
-import { App, Component, TFile } from 'obsidian';
+import { App, Component, normalizePath, TFile } from 'obsidian';
+import { stencilManager } from './stencilManager';
 import { parseDrawioCached, type ViewOptions, type DrawioPage } from './parser';
 import { GraphRenderer, type BoundingBox } from './graphRenderer';
 import type { DrawioViewSettings } from './settings';
@@ -50,12 +51,18 @@ export class DrawioViewer extends Component {
 	/** Vault-relative path of the note that contains this code block. */
 	private readonly sourcePath: string;
 
+	private readonly stencilsDir: string;
+	private stencilIssues: { missing: string[]; unused: string[]; notDownloaded: string[] } | null = null;
+	private stencilWarningBtn: HTMLElement | null = null;
+	private stencilPanel: HTMLElement | null = null;
+
 	constructor(
 		app: App,
 		container: HTMLElement,
 		options: ViewOptions,
 		settings: DrawioViewSettings,
 		sourcePath: string,
+		stencilsDir: string,
 		onUpdate?: (newParams: string) => Promise<void>,
 	) {
 		super();
@@ -64,31 +71,38 @@ export class DrawioViewer extends Component {
 		this.options = options;
 		this.settings = settings;
 		this.sourcePath = sourcePath;
+		this.stencilsDir = stencilsDir;
 		this.onUpdate = onUpdate ?? null;
 	}
 
 	onload(): void {
+		void this.initAndLoad();
+	}
+
+	private async initAndLoad(): Promise<void> {
+		if (this.options.libs.length > 0) {
+			const userDir = this.settings.customStencilDir?.trim() || null;
+			const result = await stencilManager.loadForViewer(
+				this.options.libs,
+				this.app.vault.adapter,
+				this.stencilsDir,
+				userDir,
+			);
+			this.stencilIssues = { missing: [], unused: [], notDownloaded: result.notDownloaded };
+		}
+
 		const file = this.resolveFile(this.options.filename);
 		if (!file) {
 			this.container.createDiv({ cls: 'drawio-view-error', text: `File not found: ${this.options.filename}` });
 			return;
 		}
 
-		// Synchronous first paint from cache → no blank flash on re-render.
 		const cached = contentCache.get(file.path);
 		if (cached !== undefined) {
 			this.renderFromContent(cached);
 		}
-
-		// Verify against the real file in the background; re-render only if the
-		// .drawio actually changed (or if there was no cache to paint from).
 		void this.verifyAndRender(file, cached);
 
-		// Watch for external edits to the .drawio file (e.g. saved from draw.io
-		// desktop) and re-render automatically.  registerEvent ensures the
-		// listener is removed when this viewer unloads.
-		// Debounced: draw.io may fire rapid autosave events; wait until writes
-		// settle before re-rendering to avoid redundant redraws.
 		let reloadTimer = 0;
 		this.registerEvent(
 			this.app.vault.on('modify', (changedFile) => {
@@ -221,6 +235,19 @@ export class DrawioViewer extends Component {
 			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.openExternal(); }
 		});
 
+		this.stencilWarningBtn = hud.createEl('span', {
+			cls: 'drawio-view-stencil-btn',
+			attr: { 'role': 'button', 'aria-label': 'Stencil library issues', 'tabindex': '0' },
+		});
+		this.stencilWarningBtn.setText('⚠');
+		this.registerDomEvent(this.stencilWarningBtn, 'click', (e: MouseEvent) => {
+			e.stopPropagation();
+			this.toggleStencilPanel();
+		});
+		this.registerDomEvent(this.stencilWarningBtn, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.toggleStencilPanel(); }
+		});
+
 		if (this.onUpdate) {
 			const btn = hud.createEl('span', {
 				cls: 'drawio-view-update-btn',
@@ -256,6 +283,15 @@ export class DrawioViewer extends Component {
 		});
 		this.tooltipTextEl = this.tooltipEl.createEl('span', { cls: 'drawio-view-tooltip-text' });
 		tooltipEditBtn.setText('✎');
+
+		this.stencilPanel = this.container.createDiv({ cls: 'drawio-view-stencil-panel' });
+		this.registerDomEvent(activeDocument, 'click', (e: MouseEvent) => {
+			if (!this.stencilPanel?.contains(e.target as Node) &&
+				!this.stencilWarningBtn?.contains(e.target as Node)) {
+				this.stencilPanel?.removeClass('is-visible');
+			}
+		});
+
 		this.registerDomEvent(tooltipEditBtn, 'click', (e: MouseEvent) => {
 			e.stopPropagation();
 			const cellId = this.hoveredCellId;
@@ -387,6 +423,7 @@ export class DrawioViewer extends Component {
 
 		const bbox = this.renderer.loadXml(page.xml);
 		this.currentBbox = bbox;
+		this.analyseStencils(page.xml);
 
 		if (this.options.zoom > 0 && this.options.offsetSpecified) {
 			// Zoom AND explicit pan offset both given — use as-is.
@@ -420,6 +457,19 @@ export class DrawioViewer extends Component {
 		}
 	}
 
+	private analyseStencils(pageXml: string): void {
+		if (!this.stencilWarningBtn) return;
+		const usedLibs = stencilManager.detectUsedLibs(pageXml);
+		const declaredSet = new Set(this.options.libs);
+		const usedSet = new Set(usedLibs);
+		const notDownloaded = this.stencilIssues?.notDownloaded ?? [];
+		const missing = usedLibs.filter(l => !declaredSet.has(l));
+		const unused = this.options.libs.filter(l => !usedSet.has(l));
+		this.stencilIssues = { missing, unused, notDownloaded };
+		const hasIssue = missing.length > 0 || unused.length > 0 || notDownloaded.length > 0;
+		this.stencilWarningBtn.toggleClass('is-visible', hasIssue);
+	}
+
 	/** Build the param string representing the current viewer state. */
 	private buildParamString(): string {
 		const parts: string[] = [this.options.filename];
@@ -439,6 +489,7 @@ export class DrawioViewer extends Component {
 		const off = this.currentDisplayOffset();
 		parts.push(`(${Math.round(off.x)}, ${Math.round(off.y)})`);
 
+		if (this.options.libs.length > 0) parts.push(`libs:${this.options.libs.join(',')}`);
 		return parts.join('|');
 	}
 
@@ -455,6 +506,7 @@ export class DrawioViewer extends Component {
 		if (o.height > 0) parts.push(`${o.height}px`);
 		if (o.zoom > 0) parts.push(`${o.zoom}%`);
 		if (o.offsetSpecified) parts.push(`(${Math.round(o.offsetX)}, ${Math.round(o.offsetY)})`);
+		if (o.libs.length > 0) parts.push(`libs:${o.libs.join(',')}`);
 		return parts.join('|');
 	}
 
@@ -464,6 +516,112 @@ export class DrawioViewer extends Component {
 		// buildParamString already accounts for the uncommitted visual transform,
 		// so no flush is needed — avoids an extra redraw on click.
 		await this.onUpdate(this.buildParamString());
+	}
+
+	private toggleStencilPanel(): void {
+		if (!this.stencilPanel) return;
+		if (this.stencilPanel.hasClass('is-visible')) {
+			this.stencilPanel.removeClass('is-visible');
+		} else {
+			this.renderStencilPanel();
+			this.stencilPanel.addClass('is-visible');
+		}
+	}
+
+	private renderStencilPanel(): void {
+		const panel = this.stencilPanel;
+		if (!panel || !this.stencilIssues) return;
+		panel.empty();
+		const { missing, unused, notDownloaded } = this.stencilIssues;
+		const allMissing = [...new Set([...missing, ...notDownloaded])];
+		panel.createEl('div', { cls: 'drawio-stencil-panel-title', text: '⚠ Stencil libraries' });
+		if (allMissing.length > 0) {
+			panel.createEl('div', { cls: 'drawio-stencil-panel-section', text: 'Missing (not downloaded):' });
+			for (const lib of allMissing) {
+				const row = panel.createDiv('drawio-stencil-panel-row');
+				row.createEl('span', { text: lib });
+				const btn = row.createEl('span', {
+					cls: 'drawio-stencil-action-btn',
+					attr: { role: 'button', tabindex: '0' },
+					text: 'Download & add',
+				});
+				this.registerDomEvent(btn, 'click', () => { void this.downloadAndAddLib(lib); });
+				this.registerDomEvent(btn, 'keydown', (e: KeyboardEvent) => {
+					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void this.downloadAndAddLib(lib); }
+				});
+			}
+		}
+		if (unused.length > 0) {
+			panel.createEl('div', { cls: 'drawio-stencil-panel-section', text: 'Unused:' });
+			for (const lib of unused) {
+				const row = panel.createDiv('drawio-stencil-panel-row');
+				row.createEl('span', { text: lib });
+				const btn = row.createEl('span', {
+					cls: 'drawio-stencil-action-btn',
+					attr: { role: 'button', tabindex: '0' },
+					text: 'Remove',
+				});
+				this.registerDomEvent(btn, 'click', () => { void this.removeLib(lib); });
+				this.registerDomEvent(btn, 'keydown', (e: KeyboardEvent) => {
+					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void this.removeLib(lib); }
+				});
+			}
+		}
+		if (allMissing.length + unused.length > 1) {
+			const fixBtn = panel.createEl('span', {
+				cls: 'drawio-stencil-action-btn drawio-stencil-fix-all',
+				attr: { role: 'button', tabindex: '0' },
+				text: 'Fix all',
+			});
+			this.registerDomEvent(fixBtn, 'click', () => { void this.fixAllStencilIssues(); });
+			this.registerDomEvent(fixBtn, 'keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void this.fixAllStencilIssues(); }
+			});
+		}
+	}
+
+	private async downloadAndAddLib(lib: string): Promise<void> {
+		if (!this.onUpdate) return;
+		try {
+			await stencilManager.downloadLib(lib, this.app.vault.adapter, this.stencilsDir);
+			const content = await this.app.vault.adapter.read(
+				normalizePath(`${this.stencilsDir}/${lib}.xml`),
+			);
+			stencilManager.registerXml(content);
+		} catch (err) {
+			console.error(`drawio-view: failed to download ${lib}.xml`, err);
+			return;
+		}
+		this.options.libs = [...new Set([...this.options.libs, lib])];
+		await this.onUpdate(this.buildParamString());
+		this.stencilPanel?.removeClass('is-visible');
+	}
+
+	private async removeLib(lib: string): Promise<void> {
+		if (!this.onUpdate) return;
+		this.options.libs = this.options.libs.filter(l => l !== lib);
+		await this.onUpdate(this.buildParamString());
+		this.stencilPanel?.removeClass('is-visible');
+	}
+
+	private async fixAllStencilIssues(): Promise<void> {
+		if (!this.onUpdate || !this.stencilIssues) return;
+		const { missing, unused, notDownloaded } = this.stencilIssues;
+		const toAdd = [...new Set([...missing, ...notDownloaded])];
+		for (const lib of toAdd) {
+			try {
+				await stencilManager.downloadLib(lib, this.app.vault.adapter, this.stencilsDir);
+				const content = await this.app.vault.adapter.read(
+					normalizePath(`${this.stencilsDir}/${lib}.xml`),
+				);
+				stencilManager.registerXml(content);
+			} catch (err) {
+				console.error(`drawio-view: failed to download ${lib}.xml`, err);
+			}
+		}
+		this.options.libs = [...new Set([...this.options.libs, ...toAdd].filter(l => !unused.includes(l)))];
+		await this.onUpdate(this.buildParamString());
+		this.stencilPanel?.removeClass('is-visible');
 	}
 
 	private setupInteraction(graphEl: HTMLElement): void {

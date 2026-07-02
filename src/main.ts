@@ -12,6 +12,7 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 		private originalSource: string,
 		private sectionInfo: MarkdownSectionInformation | null,
 		private settings: DrawioViewSettings,
+		private stencilsDir: string,
 	) {
 		super(el);
 	}
@@ -25,7 +26,7 @@ class DrawioCodeBlock extends MarkdownRenderChild {
 			await this.app_.vault.process(file, content => this.rewrite(content, newParams));
 		};
 
-		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, this.settings, this.sourcePath, onUpdate);
+		const viewer = new DrawioViewer(this.app_, this.containerEl, this.options, this.settings, this.sourcePath, this.stencilsDir, onUpdate);
 		this.addChild(viewer);
 		viewer.load();
 	}
@@ -67,6 +68,8 @@ export default class DrawioViewPlugin extends Plugin {
 		await this.loadSettings();
 		this.addSettingTab(new DrawioViewSettingTab(this.app, this));
 
+		const stencilsDir = normalizePath(`${this.app.vault.configDir}/plugins/drawio-view/stencils`);
+
 		this.registerMarkdownCodeBlockProcessor('drawio-view', (source, el, ctx) => {
 			const options = parseViewParams(source.trim());
 			if (!options.filename) {
@@ -76,7 +79,7 @@ export default class DrawioViewPlugin extends Plugin {
 			options.filename = this.resolveRelative(options.filename, ctx.sourcePath);
 			const sectionInfo = ctx.getSectionInfo(el);
 			// Pass the live settings object so viewers see changes without reload.
-			ctx.addChild(new DrawioCodeBlock(el, this.app, options, ctx.sourcePath, source, sectionInfo, this.settings));
+			ctx.addChild(new DrawioCodeBlock(el, this.app, options, ctx.sourcePath, source, sectionInfo, this.settings, stencilsDir));
 		});
 	}
 
