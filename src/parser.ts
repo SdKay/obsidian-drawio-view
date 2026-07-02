@@ -92,11 +92,13 @@ export interface ViewOptions {
 	offsetY: number;
 	offsetSpecified: boolean; // true only when (x,y) was explicitly written in syntax
 	height: number;       // container height in px; 0 = use CSS default (400px)
+	libs: string[];   // stencil library file stems to load (e.g. ['aws4', 'azure'])
 }
 
 const DEFAULTS: Omit<ViewOptions, 'filename'> = {
 	pageIndex: 0, pageName: '', zoom: 0, offsetX: 0, offsetY: 0, offsetSpecified: false,
 	height: 0,
+	libs: [],
 };
 
 export function parseViewParams(paramStr: string, filenameDefault = ''): ViewOptions {
@@ -121,6 +123,8 @@ export function parseViewParams(paramStr: string, filenameDefault = ''): ViewOpt
 			} else if (/^\d+px$/i.test(raw)) {
 				// Height: "600px"
 				opts.height = parseInt(raw);
+			} else if (/^libs:/i.test(raw)) {
+				opts.libs = raw.slice(5).split(',').map(s => s.trim()).filter(Boolean);
 			} else {
 				// Treat as page name (e.g. "my_page", "第 1 页")
 				opts.pageName = raw;
