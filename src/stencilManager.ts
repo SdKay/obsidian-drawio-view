@@ -150,11 +150,10 @@ class StencilManager {
 		}
 
 		if (!svgContent) return '';
-		// Encode SVG string to base64 using TextEncoder (avoids deprecated unescape).
-		const bytes = new TextEncoder().encode(svgContent);
-		let binary = '';
-		bytes.forEach(b => { binary += String.fromCharCode(b); });
-		const dataUri = `data:image/svg+xml;base64,${btoa(binary)}`;
+		// Use URL-encoded SVG (not base64) so the data URI contains no literal ';'.
+		// @maxgraph parses style strings by splitting on ';', so a base64 data URI
+		// like "data:image/svg+xml;base64,..." would be truncated at the first ';'.
+		const dataUri = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
 		imageDataUriCache.set(relPath, dataUri);
 		return dataUri;
 	}
