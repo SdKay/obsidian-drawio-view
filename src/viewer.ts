@@ -137,7 +137,12 @@ export class DrawioViewer extends Component {
 				const page = this.pages[this.currentPage];
 				if (page) {
 					this.controller?.clearVisual();
-					const bbox = this.renderer.loadXml(page.xml);
+					const processedXml = await stencilManager.preloadImages(
+						page.xml,
+						this.app.vault.adapter,
+						this.stencilsDir,
+					);
+					const bbox = this.renderer.loadXml(processedXml);
 					this.currentBbox = bbox;
 					this.updateStatus();
 				}
@@ -193,7 +198,7 @@ export class DrawioViewer extends Component {
 		}
 		this.currentPage = Math.max(0, Math.min(targetIdx, this.pages.length - 1));
 		this.buildLayout();
-		this.renderCurrentPage();
+		void this.renderCurrentPage();
 	}
 
 	private resolveFile(filename: string): TFile | null {
@@ -392,10 +397,10 @@ export class DrawioViewer extends Component {
 			tab.setAttribute('aria-selected', String(active));
 			tab.setAttribute('tabindex', active ? '0' : '-1');
 		});
-		this.renderCurrentPage();
+		void this.renderCurrentPage();
 	}
 
-	private renderCurrentPage(): void {
+	private async renderCurrentPage(): Promise<void> {
 		const graphEl = this.graphEl;
 		const panEl = this.panEl;
 		if (!graphEl || !panEl) return;
@@ -421,9 +426,16 @@ export class DrawioViewer extends Component {
 		// Reset the visual CSS transform when (re)loading a page.
 		this.controller?.clearVisual();
 
-		const bbox = this.renderer.loadXml(page.xml);
+		// Replace image=img/lib/... references with data URIs so @maxgraph can
+		// render SVG-image-based shapes (e.g. IBM Social) in the Obsidian webview.
+		const processedXml = await stencilManager.preloadImages(
+			page.xml,
+			this.app.vault.adapter,
+			this.stencilsDir,
+		);
+		const bbox = this.renderer.loadXml(processedXml);
 		this.currentBbox = bbox;
-		this.analyseStencils(page.xml);
+		this.analyseStencils(page.xml); // original XML for stencil-pattern detection
 
 		if (this.options.zoom > 0 && this.options.offsetSpecified) {
 			// Zoom AND explicit pan offset both given — use as-is.

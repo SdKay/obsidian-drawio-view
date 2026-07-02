@@ -1,6 +1,13 @@
 import { requestUrl, normalizePath } from 'obsidian';
 import type { DataAdapter, Vault } from 'obsidian';
 import { StencilShape, StencilShapeRegistry } from '@maxgraph/core';
+import { parseDrawioFile } from './parser';
+
+// Module-level cache: svg vault-relative path → base64 data URI.
+// Populated on first use; lives for the whole Obsidian session.
+const imageDataUriCache = new Map<string, string>();
+
+const IMG_RAW_BASE = 'https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/img/lib/';
 
 // ---------------------------------------------------------------------------
 // Official library catalog
@@ -63,7 +70,7 @@ class StencilManager {
 	}
 
 	/**
-	 * Scan page XML for shape=mxgraph.<lib>.<name> patterns.
+	 * Scan page XML for shape=mxgraph.<lib>.<name> patterns (stencil-based libs).
 	 * Returns the set of lib file-name stems referenced (e.g. ['aws4', 'azure']).
 	 */
 	detectUsedLibs(pageXml: string): string[] {
@@ -74,6 +81,82 @@ class StencilManager {
 			found.add(m[1]!);
 		}
 		return [...found];
+	}
+
+	/**
+	 * Scan page XML for image=img/lib/<path>.svg references (image-based libs).
+	 * Returns the relative paths, e.g. ['ibm/social/communities.svg'].
+	 */
+	detectImageRefs(pageXml: string): string[] {
+		const pattern = /image=img\/lib\/([^;'">\s]+\.svg)/g;
+		const found = new Set<string>();
+		let m: RegExpExecArray | null;
+		while ((m = pattern.exec(pageXml)) !== null) {
+			found.add(m[1]!);
+		}
+		return [...found];
+	}
+
+	/**
+	 * Replace every image=img/lib/... reference in pageXml with a base64 data
+	 * URI, downloading the SVG from GitHub if not already cached on disk.
+	 * Uses a module-level cache so each unique SVG is fetched/encoded once per
+	 * Obsidian session — page switches and reloads are instant (no I/O).
+	 */
+	async preloadImages(
+		pageXml: string,
+		adapter: DataAdapter,
+		stencilsDir: string,
+	): Promise<string> {
+		const refs = this.detectImageRefs(pageXml);
+		if (refs.length === 0) return pageXml;
+
+		let result = pageXml;
+		for (const ref of refs) {
+			const dataUri = await this.resolveImageDataUri(ref, adapter, stencilsDir);
+			if (dataUri) {
+				result = result.split(`image=img/lib/${ref}`).join(`image=${dataUri}`);
+			}
+		}
+		return result;
+	}
+
+	private async resolveImageDataUri(
+		relPath: string,
+		adapter: DataAdapter,
+		stencilsDir: string,
+	): Promise<string> {
+		const cached = imageDataUriCache.get(relPath);
+		if (cached !== undefined) return cached;
+
+		// Try local cache first, then download from GitHub.
+		const localPath = normalizePath(`${stencilsDir}/img/${relPath}`);
+		let svgContent: string | null = null;
+
+		if (await adapter.exists(localPath)) {
+			svgContent = await adapter.read(localPath);
+		} else {
+			try {
+				const response = await requestUrl({ url: `${IMG_RAW_BASE}${relPath}`, method: 'GET' });
+				svgContent = response.text;
+				// Persist so future sessions skip the network.
+				const dir = localPath.substring(0, localPath.lastIndexOf('/'));
+				if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+				await adapter.write(localPath, svgContent);
+			} catch {
+				// Network failure — don't cache, will retry on next open.
+				return '';
+			}
+		}
+
+		if (!svgContent) return '';
+		// Encode SVG string to base64 using TextEncoder (avoids deprecated unescape).
+		const bytes = new TextEncoder().encode(svgContent);
+		let binary = '';
+		bytes.forEach(b => { binary += String.fromCharCode(b); });
+		const dataUri = `data:image/svg+xml;base64,${btoa(binary)}`;
+		imageDataUriCache.set(relPath, dataUri);
+		return dataUri;
 	}
 
 	/**
@@ -138,12 +221,23 @@ class StencilManager {
 			.map(n => n.slice(0, -4));
 	}
 
-	/** Scan all .drawio files in the vault and return all referenced lib stems. */
+	/**
+	 * Scan all .drawio files in the vault and return all referenced lib stems.
+	 * Handles compressed diagrams by parsing+decompressing before scanning.
+	 * Detects both stencil-based (shape=mxgraph.*) and image-based (image=img/lib/*) libs.
+	 */
 	async detectFromVault(vault: Vault): Promise<string[]> {
 		const found = new Set<string>();
 		for (const file of vault.getFiles().filter(f => f.extension === 'drawio')) {
 			const content = await vault.read(file);
-			for (const lib of this.detectUsedLibs(content)) found.add(lib);
+			const drawioFile = parseDrawioFile(content);
+			for (const page of drawioFile.pages) {
+				for (const lib of this.detectUsedLibs(page.xml)) found.add(lib);
+				for (const ref of this.detectImageRefs(page.xml)) {
+					const cat = ref.split('/')[0];
+					if (cat) found.add(cat);
+				}
+			}
 		}
 		return [...found];
 	}
