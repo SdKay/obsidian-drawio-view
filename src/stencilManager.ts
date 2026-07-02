@@ -3,9 +3,9 @@ import type { DataAdapter, Vault } from 'obsidian';
 import { StencilShape, StencilShapeRegistry } from '@maxgraph/core';
 import { parseDrawioFile } from './parser';
 
-// Module-level cache: svg vault-relative path → base64 data URI.
-// Populated on first use; lives for the whole Obsidian session.
-const imageDataUriCache = new Map<string, string>();
+// Module-level caches, live for the whole Obsidian session.
+const imageDataUriCache = new Map<string, string>();  // svg path → data URI
+const loadedLibStems = new Set<string>();              // stencil lib stems already registered
 
 const IMG_RAW_BASE = 'https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/img/lib/';
 
@@ -15,8 +15,9 @@ const IMG_RAW_BASE = 'https://raw.githubusercontent.com/jgraph/drawio/dev/src/ma
 
 export interface LibEntry {
 	name: string;
-	file: string;
+	file: string;       // filename stem (flat) or directory name (dir-based)
 	category: string;
+	isDir?: boolean;    // true = multiple XML files under stencils/<file>/
 }
 
 export const OFFICIAL_LIBS: LibEntry[] = [
@@ -24,26 +25,29 @@ export const OFFICIAL_LIBS: LibEntry[] = [
 	{ name: 'Amazon Web Services (AWS4)', file: 'aws4',        category: 'Cloud' },
 	{ name: 'Microsoft Azure',            file: 'azure',       category: 'Cloud' },
 	{ name: 'Google Cloud Platform',      file: 'gcp2',        category: 'Cloud' },
+	{ name: 'Google Cloud (v3)',          file: 'gcp3',        category: 'Cloud' },
 	{ name: 'IBM',                        file: 'ibm',         category: 'Cloud' },
+	{ name: 'IBM Cloud',                  file: 'ibm_cloud',   category: 'Cloud' },
+	{ name: 'Kubernetes',                 file: 'kubernetes',  category: 'Cloud' },
 	// Network
-	{ name: 'Cisco',                      file: 'cisco',       category: 'Network' },
-	{ name: 'Network',                    file: 'network',     category: 'Network' },
-	{ name: 'Rack',                       file: 'rack',        category: 'Network' },
+	{ name: 'Cisco (legacy)',             file: 'cisco',       category: 'Network', isDir: true },
+	{ name: 'Cisco (2019)',               file: 'cisco19',     category: 'Network' },
+	{ name: 'Network',                    file: 'networks',    category: 'Network' },
+	{ name: 'Rack',                       file: 'rack',        category: 'Network', isDir: true },
 	// Software / Dev
-	{ name: 'UML',                        file: 'uml',         category: 'Software' },
 	{ name: 'Flowchart',                  file: 'flowchart',   category: 'Software' },
 	{ name: 'BPMN',                       file: 'bpmn',        category: 'Software' },
 	{ name: 'EIP',                        file: 'eip',         category: 'Software' },
-	{ name: 'Archimate 3',                file: 'archimate3',  category: 'Software' },
-	{ name: 'C4',                         file: 'c4',          category: 'Software' },
+	{ name: 'Bootstrap',                  file: 'bootstrap',   category: 'Software' },
 	// General
-	{ name: 'Mockup',                     file: 'mockup',      category: 'General' },
+	{ name: 'Mockup',                     file: 'mockup',      category: 'General', isDir: true },
 	{ name: 'Floorplan',                  file: 'floorplan',   category: 'General' },
-	{ name: 'Infographics',               file: 'infographic', category: 'General' },
-	{ name: 'Signs / Wayfinding',         file: 'signs',       category: 'General' },
+	{ name: 'Signs / Wayfinding',         file: 'signs',       category: 'General', isDir: true },
 	{ name: 'Lean Mapping',               file: 'lean_mapping',category: 'General' },
-	// Note: electrical and P&ID use subdirectory structures in draw.io, not single files.
-	{ name: 'P&ID',                       file: 'pid',         category: 'General' },
+	{ name: 'Fluid Power',                file: 'fluid_power', category: 'General' },
+	// Engineering
+	{ name: 'Electrical',                 file: 'electrical',  category: 'Engineering', isDir: true },
+	{ name: 'P&ID',                       file: 'pid',         category: 'Engineering', isDir: true },
 ];
 
 const RAW_BASE = 'https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/stencils/';
@@ -173,24 +177,67 @@ class StencilManager {
 		const loaded: string[] = [];
 		const failed: string[] = [];
 		for (const lib of libs) {
-			// Skip if already registered in this session.
-			if (StencilShapeRegistry.get(lib)) { loaded.push(lib); continue; }
-			let content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
-			if (content === null) {
-				// Not on disk — try downloading automatically.
-				try {
-					await this.downloadLib(lib, adapter, stencilsDir);
-					content = await adapter.read(normalizePath(`${stencilsDir}/${lib}.xml`));
-				} catch {
-					console.error(`drawio-view: failed to download ${lib}.xml`);
-					failed.push(lib);
-					continue;
+			// Session-level cache: skip I/O if already loaded this session.
+			if (loadedLibStems.has(lib)) { loaded.push(lib); continue; }
+
+			const entry = OFFICIAL_LIBS.find(e => e.file === lib);
+			try {
+				if (entry?.isDir) {
+					await this.loadDirLib(lib, adapter, stencilsDir);
+				} else {
+					let content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
+					if (content === null) {
+						await this.downloadLib(lib, adapter, stencilsDir);
+						content = await adapter.read(normalizePath(`${stencilsDir}/${lib}.xml`));
+					}
+					this.registerXml(content);
 				}
+				loadedLibStems.add(lib);
+				loaded.push(lib);
+			} catch {
+				console.error(`drawio-view: failed to load ${lib}`);
+				failed.push(lib);
 			}
-			this.registerXml(content);
-			loaded.push(lib);
 		}
 		return { loaded, failed };
+	}
+
+	/** Load (or download) all XML files in a directory-based stencil lib. */
+	private async loadDirLib(
+		dir: string,
+		adapter: DataAdapter,
+		stencilsDir: string,
+	): Promise<void> {
+		const localDir = normalizePath(`${stencilsDir}/${dir}`);
+		let files: string[] = [];
+
+		if (await adapter.exists(localDir)) {
+			const listing = await adapter.list(localDir);
+			files = listing.files.filter(f => f.endsWith('.xml'));
+		}
+
+		if (files.length === 0) {
+			// Download from GitHub — fetch directory listing via API.
+			const apiUrl = `https://api.github.com/repos/jgraph/drawio/contents/src/main/webapp/stencils/${dir}`;
+			const resp = await requestUrl({ url: apiUrl, method: 'GET' });
+			const entries = resp.json as Array<{ name: string; type: string }>;
+			const xmlFiles = entries.filter(e => e.type === 'file' && e.name.endsWith('.xml'));
+
+			if (!(await adapter.exists(localDir))) await adapter.mkdir(localDir);
+			for (const f of xmlFiles) {
+				const content = (await requestUrl({
+					url: `${RAW_BASE}${dir}/${f.name}`,
+					method: 'GET',
+				})).text;
+				await adapter.write(normalizePath(`${localDir}/${f.name}`), content);
+				files.push(normalizePath(`${localDir}/${f.name}`));
+			}
+		}
+
+		for (const filePath of files) {
+			const content = await adapter.read(filePath);
+			this.registerXml(content);
+		}
 	}
 
 	/**
@@ -238,21 +285,33 @@ class StencilManager {
 		adapter: DataAdapter,
 		stencilsDir: string,
 	): Promise<void> {
-		const response = await requestUrl({ url: `${RAW_BASE}${file}.xml`, method: 'GET' });
-		if (!(await adapter.exists(stencilsDir))) {
-			await adapter.mkdir(stencilsDir);
+		const entry = OFFICIAL_LIBS.find(e => e.file === file);
+		if (entry?.isDir) {
+			await this.loadDirLib(file, adapter, stencilsDir);
+			return;
 		}
+		if (!(await adapter.exists(stencilsDir))) await adapter.mkdir(stencilsDir);
+		const response = await requestUrl({ url: `${RAW_BASE}${file}.xml`, method: 'GET' });
 		await adapter.write(normalizePath(`${stencilsDir}/${file}.xml`), response.text);
 	}
 
-	/** List lib file stems already downloaded in stencilsDir. */
+	/** List lib stems that are available locally (flat files and populated dirs). */
 	async getLocalLibs(adapter: DataAdapter, stencilsDir: string): Promise<string[]> {
 		if (!(await adapter.exists(stencilsDir))) return [];
 		const listing = await adapter.list(stencilsDir);
-		return listing.files
+		const flatStems = listing.files
 			.map(p => (p.split('/').pop() ?? ''))
 			.filter(n => n.endsWith('.xml'))
 			.map(n => n.slice(0, -4));
+		// A subdirectory counts as downloaded if it contains at least one XML file.
+		const dirStems: string[] = [];
+		for (const folder of listing.folders) {
+			const name = folder.split('/').pop() ?? '';
+			if (!name) continue;
+			const sub = await adapter.list(normalizePath(`${stencilsDir}/${name}`));
+			if (sub.files.some(f => f.endsWith('.xml'))) dirStems.push(name);
+		}
+		return [...flatStems, ...dirStems];
 	}
 
 	/**
