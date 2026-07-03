@@ -64,11 +64,20 @@ class StencilManager {
 	registerXml(xmlContent: string): void {
 		const doc = new DOMParser().parseFromString(xmlContent, 'application/xml');
 		if (doc.querySelector('parsererror')) return;
-		doc.querySelectorAll('shapes > shape, shape').forEach(shape => {
-			const name = shape.getAttribute('name');
-			if (!name) return;
-			if (!StencilShapeRegistry.get(name)) {
-				StencilShapeRegistry.add(name, new StencilShape(shape));
+
+		// The <shapes name="mxgraph.aws4"> container provides the fully-qualified
+		// prefix.  Each <shape name="a1 instance"> is registered as
+		// "mxgraph.aws4.a1_instance" (lower-case, spaces → underscores) which is
+		// what draw.io writes into style="shape=mxgraph.aws4.a1_instance".
+		const prefix = doc.querySelector('shapes')?.getAttribute('name') ?? '';
+
+		doc.querySelectorAll('shape').forEach(shape => {
+			const rawName = shape.getAttribute('name');
+			if (!rawName) return;
+			const normalized = rawName.toLowerCase().replace(/\s+/g, '_');
+			const fullName = prefix ? `${prefix}.${normalized}` : normalized;
+			if (!StencilShapeRegistry.get(fullName)) {
+				StencilShapeRegistry.add(fullName, new StencilShape(shape));
 			}
 		});
 	}

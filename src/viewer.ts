@@ -79,11 +79,12 @@ export class DrawioViewer extends Component {
 	}
 
 	private async initAndLoad(): Promise<void> {
-		// Pre-load any libs cached in the code block for a flash-free first paint.
-		// The authoritative load happens in renderCurrentPage (auto-detect from XML).
+		// Pre-load cached libs for a flash-free first paint.  Uses loadAndRegisterLibs
+		// so the session cache (loadedLibStems) is populated — renderCurrentPage will
+		// then skip all I/O on its own loadAndRegisterLibs call.
 		if (this.options.libs.length > 0) {
 			const userDir = this.settings.customStencilDir?.trim() || null;
-			await stencilManager.loadForViewer(
+			await stencilManager.loadAndRegisterLibs(
 				this.options.libs,
 				this.app.vault.adapter,
 				this.stencilsDir,
