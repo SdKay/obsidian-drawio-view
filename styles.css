@@ -253,6 +253,71 @@
     font-size: var(--font-ui-smaller);
 }
 
+/* ── Missing libs banner ─────────────────────────────────── */
+.drawio-view-libs-banner {
+    display: none;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--background-secondary) 95%, transparent);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+    z-index: 15;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.drawio-view-libs-banner.is-visible {
+    display: flex;
+}
+
+.drawio-libs-banner-msg {
+    flex: 1;
+    color: var(--text-normal);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.drawio-libs-banner-error {
+    color: var(--text-error);
+}
+
+.drawio-libs-banner-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.drawio-libs-banner-btn {
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    user-select: none;
+    white-space: nowrap;
+}
+
+.drawio-libs-banner-btn:hover {
+    color: var(--text-normal);
+    border-color: var(--interactive-accent);
+}
+
+.drawio-libs-banner-btn-primary {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+}
+
+.drawio-libs-banner-btn-primary:hover {
+    background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
 /* ── Error ───────────────────────────────────────────────── */
 .drawio-view-error {
     padding: 12px;

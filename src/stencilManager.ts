@@ -177,6 +177,60 @@ class StencilManager {
 	 * Returns the final set of loaded lib stems and any that failed.
 	 * Used by the viewer for fully automatic lib management.
 	 */
+	/** Libs that are needed, not yet in session cache, AND not present on disk. */
+	async findMissingLibs(
+		libs: string[],
+		adapter: DataAdapter,
+		stencilsDir: string,
+		userDir: string | null,
+	): Promise<string[]> {
+		const missing: string[] = [];
+		for (const lib of libs) {
+			if (loadedLibStems.has(lib)) continue;
+			if (!(await this.isLibOnDisk(lib, adapter, stencilsDir, userDir))) {
+				missing.push(lib);
+			}
+		}
+		return missing;
+	}
+
+	/** Libs that are needed, not in session cache, BUT already on disk. */
+	async findUnloadedLocalLibs(
+		libs: string[],
+		adapter: DataAdapter,
+		stencilsDir: string,
+		userDir: string | null,
+	): Promise<string[]> {
+		const unloaded: string[] = [];
+		for (const lib of libs) {
+			if (loadedLibStems.has(lib)) continue;
+			if (await this.isLibOnDisk(lib, adapter, stencilsDir, userDir)) {
+				unloaded.push(lib);
+			}
+		}
+		return unloaded;
+	}
+
+	private async isLibOnDisk(
+		lib: string,
+		adapter: DataAdapter,
+		stencilsDir: string,
+		userDir: string | null,
+	): Promise<boolean> {
+		const entry = OFFICIAL_LIBS.find(e => e.file === lib);
+		if (entry?.isDir) {
+			const localDir = normalizePath(`${stencilsDir}/${lib}`);
+			if (!(await adapter.exists(localDir))) return false;
+			const listing = await adapter.list(localDir);
+			return listing.files.some(f => f.endsWith('.xml'));
+		}
+		if (await adapter.exists(normalizePath(`${stencilsDir}/${lib}.xml`))) return true;
+		if (userDir) {
+			if (await adapter.exists(normalizePath(`${userDir}/${lib}.xml`))) return true;
+		}
+		return false;
+	}
+
 	async loadAndRegisterLibs(
 		libs: string[],
 		adapter: DataAdapter,
