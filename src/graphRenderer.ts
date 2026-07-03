@@ -105,13 +105,39 @@ export class GraphRenderer {
 	 * graph-coord translate for the new model, keeping the visual position stable.
 	 */
 	loadXmlPreserveView(xmlString: string): BoundingBox {
-		const zoomPct = this.getScale() * 100;
+		const scale = this.getScale();
 		const offset = this.getDisplayOffset();
-		const serializer = new ModelXmlSerializer(this.graph.getDataModel());
-		serializer.import(preprocessXml(xmlString));
-		this.setViewFromDisplay(zoomPct, offset.x, offset.y);
-		const b = this.graph.getGraphBounds();
-		return { x: b.x, y: b.y, width: b.width, height: b.height };
+		// Do the import AND the view restore inside a single DOM-detach so both
+		// redraws happen off-tree — one reattach mutation instead of a full
+		// MutationObserver storm from import plus a second from the view set.
+		return this.withDetachedContainer(() => {
+			const serializer = new ModelXmlSerializer(this.graph.getDataModel());
+			serializer.import(preprocessXml(xmlString));
+			this.graph.getView().scaleAndTranslate(scale, offset.x / scale, offset.y / scale);
+			const b = this.graph.getGraphBounds();
+			return { x: b.x, y: b.y, width: b.width, height: b.height };
+		});
+	}
+
+	/**
+	 * Run `fn` with the graph container temporarily detached from the DOM, so
+	 * the hundreds of SVG attribute mutations @maxgraph makes during a redraw
+	 * happen off-tree and are invisible to other plugins' MutationObservers.
+	 * Re-attaching fires exactly one childList mutation.
+	 */
+	private withDetachedContainer<T>(fn: () => T): T {
+		const container = this.graph.container;
+		const parent = container.parentElement;
+		const next = container.nextSibling;
+		if (parent) parent.removeChild(container);
+		try {
+			return fn();
+		} finally {
+			if (parent) {
+				if (next) parent.insertBefore(container, next);
+				else parent.appendChild(container);
+			}
+		}
 	}
 
 	/**
@@ -146,24 +172,11 @@ export class GraphRenderer {
 	 */
 	setViewFromDisplay(zoomPct: number, displayX: number, displayY: number): void {
 		const scale = zoomPct / 100;
-		// Detach the container from the DOM before the @maxgraph redraw.
-		// @maxgraph updates hundreds of SVG element attributes when the view
-		// changes; each attribute mutation fires every MutationObserver that
-		// watches the document (i.e. every other Obsidian plugin), turning a
-		// ~100 ms render into 3-4 s in a loaded vault.  While the container is
-		// detached those mutations happen off-tree and are invisible to observers.
-		// Re-attaching fires exactly ONE childList mutation — far cheaper.
-		const container = this.graph.container;
-		const parent = container.parentElement;
-		const next = container.nextSibling;
-		if (parent) parent.removeChild(container);
-
-		this.graph.getView().scaleAndTranslate(scale, displayX / scale, displayY / scale);
-
-		if (parent) {
-			if (next) parent.insertBefore(container, next);
-			else parent.appendChild(container);
-		}
+		// Detach during the redraw so @maxgraph's SVG attribute mutations happen
+		// off-tree (see withDetachedContainer) — avoids a MutationObserver storm.
+		this.withDetachedContainer(() => {
+			this.graph.getView().scaleAndTranslate(scale, displayX / scale, displayY / scale);
+		});
 	}
 
 	/** Current scale (1.0 = 100%). */

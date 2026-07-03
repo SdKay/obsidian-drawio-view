@@ -532,10 +532,10 @@ export class DrawioViewer extends Component {
 		if (!banner) return;
 		banner.empty();
 
-		banner.createEl('span', {
-			cls: 'drawio-libs-banner-msg',
-			text: `Missing shape libraries: ${names.join(', ')}`,
-		});
+		const msg = banner.createEl('span', { cls: 'drawio-libs-banner-msg' });
+		msg.appendText(`⚠ Missing shape libraries: ${names.join(', ')} `);
+		msg.createEl('span', { cls: 'drawio-libs-banner-hint', text: '— download here or in plugin settings' });
+
 		const actions = banner.createDiv('drawio-libs-banner-actions');
 
 		const dlBtn = actions.createEl('span', {
@@ -548,6 +548,16 @@ export class DrawioViewer extends Component {
 			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void this.downloadPending(); }
 		});
 
+		const settingsBtn = actions.createEl('span', {
+			cls: 'drawio-libs-banner-btn',
+			attr: { role: 'button', tabindex: '0' },
+			text: 'Settings',
+		});
+		this.registerDomEvent(settingsBtn, 'click', () => { this.openPluginSettings(); });
+		this.registerDomEvent(settingsBtn, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.openPluginSettings(); }
+		});
+
 		const dismissBtn = actions.createEl('span', {
 			cls: 'drawio-libs-banner-btn',
 			attr: { role: 'button', tabindex: '0' },
@@ -556,6 +566,15 @@ export class DrawioViewer extends Component {
 		this.registerDomEvent(dismissBtn, 'click', () => { banner.removeClass('is-visible'); });
 
 		banner.addClass('is-visible');
+	}
+
+	/** Open Obsidian's settings dialog on this plugin's tab. */
+	private openPluginSettings(): void {
+		const setting = (this.app as unknown as {
+			setting?: { open(): void; openTabById(id: string): void };
+		}).setting;
+		setting?.open();
+		setting?.openTabById('drawio-view');
 	}
 
 	private async downloadPending(): Promise<void> {
