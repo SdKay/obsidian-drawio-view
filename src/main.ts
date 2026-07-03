@@ -78,6 +78,11 @@ export default class DrawioViewPlugin extends Plugin {
 			}
 			options.filename = this.resolveRelative(options.filename, ctx.sourcePath);
 			const sectionInfo = ctx.getSectionInfo(el);
+			// Reserve the final height synchronously so the code block occupies its
+			// full height the instant Obsidian lays it out.  Without this the block
+			// starts at 0 height, Obsidian anchors the scroll there, and the diagram
+			// expanding to ~400px afterwards shoves the content above it off-screen.
+			el.style.setProperty('min-height', `${options.height > 0 ? options.height : 400}px`);
 			// Pass the live settings object so viewers see changes without reload.
 			ctx.addChild(new DrawioCodeBlock(el, this.app, options, ctx.sourcePath, source, sectionInfo, this.settings, stencilsDir));
 		});

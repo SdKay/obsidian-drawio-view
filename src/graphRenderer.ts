@@ -1,4 +1,8 @@
 import { Graph, ModelXmlSerializer, InternalEvent, type ShapeValue, type Cell } from '@maxgraph/core';
+import { registerBuiltinShapes } from './builtinShapes';
+
+// Register draw.io built-in JS shapes (curlyBracket etc.) once at module load.
+registerBuiltinShapes();
 
 export interface BoundingBox {
 	x: number;
@@ -87,10 +91,15 @@ export class GraphRenderer {
 
 	/** Load (or replace) the diagram content from an mxGraphModel XML string. */
 	loadXml(xmlString: string): BoundingBox {
-		const serializer = new ModelXmlSerializer(this.graph.getDataModel());
-		serializer.import(preprocessXml(xmlString));
-		const b = this.graph.getGraphBounds();
-		return { x: b.x, y: b.y, width: b.width, height: b.height };
+		// Detach during import so @maxgraph's attribute mutations happen off-tree
+		// (see withDetachedContainer) — without this the import fires a full
+		// MutationObserver storm that blocks the main thread on large diagrams.
+		return this.withDetachedContainer(() => {
+			const serializer = new ModelXmlSerializer(this.graph.getDataModel());
+			serializer.import(preprocessXml(xmlString));
+			const b = this.graph.getGraphBounds();
+			return { x: b.x, y: b.y, width: b.width, height: b.height };
+		});
 	}
 
 	/**
@@ -148,7 +157,9 @@ export class GraphRenderer {
 		const scale = zoomPct / 100;
 		const tx = cw / (2 * scale) - (bbox.x + bbox.width / 2);
 		const ty = ch / (2 * scale) - (bbox.y + bbox.height / 2);
-		this.graph.getView().scaleAndTranslate(scale, tx, ty);
+		this.withDetachedContainer(() => {
+			this.graph.getView().scaleAndTranslate(scale, tx, ty);
+		});
 	}
 
 	/** Auto-fit the diagram to fill cw×ch pixels, centred with 20 px padding. */
@@ -163,7 +174,9 @@ export class GraphRenderer {
 		// screen = (graph + tx) * scale  =>  to centre: tx = cw/(2·s) - bbox_cx
 		const tx = cw / (2 * scale) - (bbox.x + bbox.width / 2);
 		const ty = ch / (2 * scale) - (bbox.y + bbox.height / 2);
-		this.graph.getView().scaleAndTranslate(scale, tx, ty);
+		this.withDetachedContainer(() => {
+			this.graph.getView().scaleAndTranslate(scale, tx, ty);
+		});
 	}
 
 	/**

@@ -198,6 +198,9 @@ export class DrawioViewer extends Component {
 
 	private buildLayout(): void {
 		this.container.addClass('drawio-view-container');
+		// Clear the render-time height reservation (set in main.ts) now that the
+		// real container drives height — keeps the resize handle free to shrink.
+		this.container.style.removeProperty('min-height');
 		if (this.options.height > 0) {
 			this.container.style.height = `${this.options.height}px`;
 		}
@@ -491,7 +494,7 @@ export class DrawioViewer extends Component {
 
 		const neededLibs = stencilManager.detectUsedLibs(pageXml);
 		if (neededLibs.length > 0) {
-			await stencilManager.registerLocalLibs(neededLibs, adapter, this.stencilsDir, userDir);
+			await stencilManager.registerLocalLibs(neededLibs, pageXml, adapter, this.stencilsDir, userDir);
 		}
 		const { xml, missing: missingImages } = await stencilManager.preloadImages(
 			pageXml, adapter, this.stencilsDir,
@@ -608,7 +611,8 @@ export class DrawioViewer extends Component {
 
 		msg.setText('Done — rendering…');
 		// Register the newly downloaded stencil libs, then re-render once.
-		await stencilManager.registerLocalLibs(stencils, adapter, this.stencilsDir, userDir);
+		const pageXml = this.pages[this.currentPage]?.xml ?? '';
+		await stencilManager.registerLocalLibs(stencils, pageXml, adapter, this.stencilsDir, userDir);
 		banner.removeClass('is-visible');
 		void this.renderCurrentPage();
 	}

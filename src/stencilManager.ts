@@ -5,7 +5,9 @@ import { parseDrawioFile } from './parser';
 
 // Module-level caches, live for the whole Obsidian session.
 const imageDataUriCache = new Map<string, string>();  // svg path → data URI
-const loadedLibStems = new Set<string>();              // stencil lib stems already registered
+// Registered keys: flat lib stem (e.g. "aws4") or dir subfile ("electrical/plc_ladder").
+// Sub-file granularity means a huge dir-lib only parses the files actually used.
+const loadedKeys = new Set<string>();
 
 const IMG_RAW_BASE = 'https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/img/lib/';
 
@@ -177,34 +179,50 @@ class StencilManager {
 	}
 
 	/**
+	 * Extract the sub-file names a page uses from a directory-based lib.
+	 * `shape=mxgraph.electrical.plc_ladder.contact` → 'plc_ladder'.
+	 */
+	private detectSubfiles(pageXml: string, lib: string): string[] {
+		const re = new RegExp(`shape=mxgraph\\.${lib}\\.([a-zA-Z0-9_]+)\\.`, 'g');
+		const found = new Set<string>();
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(pageXml)) !== null) found.add(m[1]!);
+		return [...found];
+	}
+
+	/**
 	 * Register stencil libs that are ALREADY on disk (no network).
-	 * Skips libs already in the session cache.  Missing-from-disk libs are
-	 * silently skipped — the caller detects and prompts for those separately.
-	 * Runs before the first paint so locally-available shapes render in one pass.
+	 * For directory-based libs (electrical, cisco, …) only the sub-files the page
+	 * actually references are read+parsed — a page using one `plc_ladder` shape
+	 * parses one file, not all 24, so the first paint isn't blocked for seconds.
+	 * Missing-from-disk libs are skipped (surfaced via the banner instead).
 	 */
 	async registerLocalLibs(
 		libs: string[],
+		pageXml: string,
 		adapter: DataAdapter,
 		stencilsDir: string,
 		userDir: string | null,
 	): Promise<void> {
 		for (const lib of libs) {
-			if (loadedLibStems.has(lib)) continue;
 			const entry = OFFICIAL_LIBS.find(e => e.file === lib);
 			try {
 				if (entry?.isDir) {
-					const localDir = normalizePath(`${stencilsDir}/${lib}`);
-					if (!(await adapter.exists(localDir))) continue;
-					const listing = await adapter.list(localDir);
-					const files = listing.files.filter(f => f.endsWith('.xml'));
-					if (files.length === 0) continue;
-					await Promise.all(files.map(async f => { this.registerXml(await adapter.read(f)); }));
-					loadedLibStems.add(lib);
+					const subfiles = this.detectSubfiles(pageXml, lib);
+					await Promise.all(subfiles.map(async sf => {
+						const key = `${lib}/${sf}`;
+						if (loadedKeys.has(key)) return;
+						const path = normalizePath(`${stencilsDir}/${lib}/${sf}.xml`);
+						if (!(await adapter.exists(path))) return;
+						this.registerXml(await adapter.read(path));
+						loadedKeys.add(key);
+					}));
 				} else {
+					if (loadedKeys.has(lib)) continue;
 					const content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
 					if (content === null) continue;
 					this.registerXml(content);
-					loadedLibStems.add(lib);
+					loadedKeys.add(lib);
 				}
 			} catch {
 				// Ignore — treated as missing and surfaced via the banner.
@@ -221,7 +239,7 @@ class StencilManager {
 	): Promise<string[]> {
 		const missing: string[] = [];
 		for (const lib of libs) {
-			if (loadedLibStems.has(lib)) continue;
+			if (loadedKeys.has(lib)) continue;
 			if (!(await this.isLibOnDisk(lib, adapter, stencilsDir, userDir))) {
 				missing.push(lib);
 			}
@@ -249,42 +267,32 @@ class StencilManager {
 		return false;
 	}
 
-	/** Load (or download) all XML files in a directory-based stencil lib. */
-	private async loadDirLib(
+	/**
+	 * Download all XML files of a directory-based stencil lib to disk.
+	 * Does NOT register them — registration happens lazily per sub-file in
+	 * registerLocalLibs, so only used sub-files are ever parsed.
+	 */
+	private async downloadDirLib(
 		dir: string,
 		adapter: DataAdapter,
 		stencilsDir: string,
 	): Promise<void> {
 		const localDir = normalizePath(`${stencilsDir}/${dir}`);
-		let files: string[] = [];
-
 		if (await adapter.exists(localDir)) {
 			const listing = await adapter.list(localDir);
-			files = listing.files.filter(f => f.endsWith('.xml'));
+			if (listing.files.some(f => f.endsWith('.xml'))) return;  // already downloaded
 		}
 
-		if (files.length === 0) {
-			// Download from GitHub — fetch directory listing via API.
-			const apiUrl = `https://api.github.com/repos/jgraph/drawio/contents/src/main/webapp/stencils/${dir}`;
-			const resp = await requestUrl({ url: apiUrl, method: 'GET' });
-			const entries = resp.json as Array<{ name: string; type: string }>;
-			const xmlFiles = entries.filter(e => e.type === 'file' && e.name.endsWith('.xml'));
+		// Fetch the directory listing via the GitHub API, then download each file.
+		const apiUrl = `https://api.github.com/repos/jgraph/drawio/contents/src/main/webapp/stencils/${dir}`;
+		const resp = await requestUrl({ url: apiUrl, method: 'GET' });
+		const entries = resp.json as Array<{ name: string; type: string }>;
+		const xmlFiles = entries.filter(e => e.type === 'file' && e.name.endsWith('.xml'));
 
-			if (!(await adapter.exists(localDir))) await adapter.mkdir(localDir);
-			for (const f of xmlFiles) {
-				const content = (await requestUrl({
-					url: `${RAW_BASE}${dir}/${f.name}`,
-					method: 'GET',
-				})).text;
-				await adapter.write(normalizePath(`${localDir}/${f.name}`), content);
-				files.push(normalizePath(`${localDir}/${f.name}`));
-			}
-		}
-
-		// Read all XML files in parallel to minimise I/O latency.
-		await Promise.all(files.map(async filePath => {
-			const content = await adapter.read(filePath);
-			this.registerXml(content);
+		if (!(await adapter.exists(localDir))) await adapter.mkdir(localDir);
+		await Promise.all(xmlFiles.map(async f => {
+			const content = (await requestUrl({ url: `${RAW_BASE}${dir}/${f.name}`, method: 'GET' })).text;
+			await adapter.write(normalizePath(`${localDir}/${f.name}`), content);
 		}));
 	}
 
@@ -311,7 +319,7 @@ class StencilManager {
 	): Promise<void> {
 		const entry = OFFICIAL_LIBS.find(e => e.file === file);
 		if (entry?.isDir) {
-			await this.loadDirLib(file, adapter, stencilsDir);
+			await this.downloadDirLib(file, adapter, stencilsDir);
 			return;
 		}
 		if (!(await adapter.exists(stencilsDir))) await adapter.mkdir(stencilsDir);
