@@ -1,11 +1,45 @@
-# drawio-view
+<div align="center">
 
-Renders [draw.io](https://www.drawio.com/) `.drawio` diagrams inline inside Obsidian notes.
-Powered by [@maxgraph/core](https://github.com/maxGraph/maxGraph) — the TypeScript successor to the mxGraph library that draw.io is built on.
+<img src="./drawio-view-demo.gif" alt="Draw.io View demo" width="720" />
+
+<p>
+  <b>🔍 Zoom &nbsp;·&nbsp; 🖱️ Pan &nbsp;·&nbsp; 📄 Multi-page &nbsp;·&nbsp; 🔗 Shape links &nbsp;·&nbsp; 📦 Third-party libs &nbsp;·&nbsp; 🌙 Dark mode</b>
+</p>
+
+<p>
+  <a href="https://github.com/SdKay/obsidian-drawio-view/releases/latest">
+    <img src="https://img.shields.io/github/v/release/SdKay/obsidian-drawio-view?style=flat-square&color=7c3aed" alt="Latest release" />
+  </a>
+  <a href="https://github.com/SdKay/obsidian-drawio-view/releases">
+    <img src="https://img.shields.io/github/downloads/SdKay/obsidian-drawio-view/total?style=flat-square&color=brightgreen" alt="Total downloads" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/SdKay/obsidian-drawio-view?style=flat-square" alt="License" />
+  </a>
+  <a href="https://obsidian.md/plugins?id=drawio-view">
+    <img src="https://img.shields.io/badge/Obsidian-Community_Plugin-7c3aed?style=flat-square&logo=obsidian&logoColor=white" alt="Obsidian community plugin" />
+  </a>
+</p>
+
+<p>
+  <a href="README_CN.md">中文文档</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#shape-libraries">Shape Libraries</a> ·
+  <a href="#controls">Controls</a> ·
+  <a href="#settings">Settings</a> ·
+  <a href="#installation">Installation</a>
+</p>
+
+<p>
+  <img src="wechat.jpg" alt="WeChat public account" width="120" />
+  <br/><sub>Follow on WeChat for more Obsidian plugins &amp; tools</sub>
+</p>
+
+</div>
+
+Render [draw.io](https://www.drawio.com/) `.drawio` diagrams inline inside Obsidian notes. Powered by [@maxgraph/core](https://github.com/maxGraph/maxGraph) — the TypeScript successor to the mxGraph library that draw.io is built on.
 
 ---
-
-![](drawio-view-demo.gif)
 
 ## Usage
 
@@ -17,7 +51,7 @@ my-diagram.drawio
 ```
 ````
 
-The viewer supports optional parameters separated by `|`:
+Optional parameters separated by `|`:
 
 ````markdown
 ```drawio-view
@@ -38,21 +72,38 @@ Parameters can appear in any order and all are optional:
 
 ````markdown
 ```drawio-view
-skb.drawio
-```
-
-```drawio-view
-skb.drawio|my_page
-```
-
-```drawio-view
-skb.drawio|page-2|600px|120%
-```
-
-```drawio-view
 skb.drawio|my_page|80%|(190, 34)
 ```
 ````
+
+---
+
+## Shape Libraries
+
+Draw.io diagrams can use extended shape libraries (AWS, Azure, GCP, Cisco, Electrical, and many more) that are not bundled with this plugin. The plugin handles them automatically.
+
+### How it works
+
+1. **First open** — the plugin detects which shape libraries the diagram needs. Locally-cached libraries load instantly before the first paint. If any libraries are missing from your device, a download banner appears at the top of the viewer.
+
+2. **Download banner** — click **Download** to fetch the missing libraries from draw.io's official GitHub repository. Libraries are saved to your vault's plugin folder and reused across all future diagrams. Click **Settings** to manage libraries manually, or **✕** to dismiss (shapes will show as rectangles until downloaded).
+
+3. **Subsequent opens** — already-downloaded libraries register in milliseconds with no network access.
+
+### Supported library types
+
+| Type | Examples | Behaviour |
+|------|---------|-----------|
+| XML stencil libs | AWS, Azure, GCP, Cisco, Electrical… | Auto-detected and downloaded on demand |
+| SVG image libs | IBM Social, IBM Infrastructure… | Auto-downloaded on first use, fully transparent |
+| Built-in shapes | `curlyBracket`, and others | Ported natively, no download needed |
+
+### Managing libraries in Settings
+
+Go to **Settings → Draw.io View → Shape Libraries** to:
+- Browse and download official libraries organised by category (Cloud, Network, Software, Engineering…)
+- Click **Auto-detect from vault** to scan all `.drawio` files and pre-tick the libraries they use
+- Specify a **custom library folder** in your vault for your own stencil `.xml` files — place any compatible stencil file there and it loads automatically
 
 ---
 
@@ -60,48 +111,40 @@ skb.drawio|my_page|80%|(190, 34)
 
 | Action | Result |
 |--------|--------|
-| **Scroll wheel** | Zoom in / out towards the cursor |
+| **Scroll wheel** | Zoom in / out towards cursor |
 | **Left-click drag** | Pan the diagram |
-| **Double-click** | Reset to the initial view (parameters or auto-fit) |
-| **Drag bottom edge** | Resize the viewer height (written back automatically) |
-| **↗ button** (bottom-right HUD) | Open the `.drawio` file in the system default editor (e.g. draw.io desktop) |
-| **⊙ button** (bottom-right HUD) | Write the current page / zoom / offset back into the code block |
-| **Tab bar** (bottom, multi-page only) | Switch between diagram pages |
+| **Two-finger pinch** | Pinch-zoom on touch / mobile |
+| **Double-click** | Reset to initial view |
+| **Drag bottom edge** | Resize the viewer height |
+| **↗ button** (HUD) | Open `.drawio` file in system default editor (e.g. draw.io desktop) |
+| **⊙ button** (HUD) | Save current page / zoom / offset back into the code block |
+| **Tab bar** (multi-page) | Switch between diagram pages |
 
-The **⊙ button** is the easiest way to set default parameters: pan and zoom to the view you want, then click ⊙. The code block in your note is updated in-place with the current values, so that view is restored on the next open.
+The **⊙ button** is the easiest way to set a default view: pan and zoom to the position you want, then click ⊙. The code block updates in-place and that view is restored on every subsequent open.
 
-Pan and zoom are GPU-composited and committed to the renderer only when you stop interacting, so they stay smooth even with large diagrams in heavily-loaded vaults. The current zoom and offset are always shown in the bottom-right corner.
+### Shape links
 
-> The plugin never stores view state between sessions — every open starts from the parameters in the code block (or auto-fit if none are given).
+Shapes can carry links to vault notes or external URLs. Hover any shape to see the **✎** button.
 
----
-
-## Shape links
-
-Shapes can carry links to URLs or vault notes. Hover over any shape to see a tooltip and a **✎** button.
-
-- **Click ✎** to add or edit the link on a shape. A fuzzy search modal opens:
-  - Type to search vault notes by name or path.
-  - Type a full `https://` URL to use it directly.
-  - The existing link is pre-filled so you can refine it.
-- **Follow a link** by clicking the shape (exact key depends on the *Click behavior* setting — see Settings below).
-
-Links are written directly into the `.drawio` file and survive round-trips through the draw.io desktop app.
+- **Click ✎** — opens a fuzzy-search modal. Type to search vault notes by name, or paste an `https://` URL directly.
+- **Follow a link** — plain click or Ctrl+click depending on the *Click behavior* setting.
 
 ---
 
 ## Dark mode
 
-The viewer automatically inverts diagrams when Obsidian switches to a dark theme, keeping white backgrounds and black text readable without any configuration.
+The viewer automatically inverts diagrams when Obsidian switches to a dark theme — no configuration needed.
 
 ---
 
 ## Settings
 
-| Setting | Options | Description |
-|---------|---------|-------------|
-| **Zoom modifier key** | Scroll wheel / Ctrl + scroll wheel | How the scroll wheel zooms. Choose **Ctrl + scroll wheel** so plain scrolling moves through the note instead of zooming the diagram under the cursor. |
-| **Click behavior** | Drag to pan · Ctrl+click to follow links / Click to follow links · Ctrl+drag to pan | Controls how clicking and dragging interact with shape links. |
+| Setting | Description |
+|---------|-------------|
+| **Zoom modifier key** | Whether plain scroll or Ctrl+scroll zooms the diagram. |
+| **Click behavior** | Controls how clicking and dragging interact with shape links. |
+| **Custom library folder** | Vault-relative path to a folder with your own stencil `.xml` files. |
+| **Shape Libraries** | Download official third-party shape libraries; auto-detect from vault. |
 
 ---
 
@@ -122,17 +165,10 @@ The viewer automatically inverts diagrams when Obsidian switches to a dark theme
 
 ## Known limitations
 
-### Third-party shape libraries
-Shapes from draw.io's extended libraries (IBM, AWS, GCP, Azure, Cisco, etc.) use custom SVG stencils not bundled with this plugin. They fall back to plain rectangles with their label text intact. Core mxGraph shapes (swimlanes, basic geometry, UML, flowchart) render correctly.
-
-### Diagonal edges at non-integer zoom levels
-Orthogonal edges can appear slightly diagonal at certain zoom percentages due to floating-point coordinate rounding. The `shape-rendering: crispEdges` CSS property mitigates most cases but does not eliminate the issue entirely. Cosmetic only.
-
-### draw.io-specific table shapes
-`shape=table`, `shape=tableRow`, and `shape=partialRectangle` render as plain rectangles; labels and layout are preserved.
-
-### No wiki-embed support
-`![[file.drawio]]` inline embed syntax is not supported. Use the code block syntax instead.
+- **Diagonal edges at non-integer zoom** — orthogonal edges can appear slightly diagonal at certain zoom percentages. Cosmetic only.
+- **draw.io table shapes** — `shape=table`, `shape=tableRow`, and `shape=partialRectangle` render as rectangles; labels are preserved.
+- **No wiki-embed** — `![[file.drawio]]` is not supported; use the code block syntax instead.
+- **Scroll jump after code-block edit** — exiting the code block source editor in Live Preview mode can cause a small scroll shift. Being investigated.
 
 ---
 
