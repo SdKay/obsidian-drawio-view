@@ -116,25 +116,35 @@ class StencilManager {
 	 * Uses a module-level cache so each unique SVG is fetched/encoded once per
 	 * Obsidian session — page switches and reloads are instant (no I/O).
 	 */
+	/**
+	 * Replace image=img/lib/... references with base64 data URIs using ONLY
+	 * locally-cached SVGs (no network).  Returns the processed XML plus the list
+	 * of refs that are not available locally (so the caller can prompt to download).
+	 * Session cache makes repeat calls (page switch / reload) free.
+	 */
 	async preloadImages(
 		pageXml: string,
 		adapter: DataAdapter,
 		stencilsDir: string,
-	): Promise<string> {
+	): Promise<{ xml: string; missing: string[] }> {
 		const refs = this.detectImageRefs(pageXml);
-		if (refs.length === 0) return pageXml;
+		if (refs.length === 0) return { xml: pageXml, missing: [] };
 
 		let result = pageXml;
+		const missing: string[] = [];
 		for (const ref of refs) {
-			const dataUri = await this.resolveImageDataUri(ref, adapter, stencilsDir);
+			const dataUri = await this.resolveLocalImageDataUri(ref, adapter, stencilsDir);
 			if (dataUri) {
 				result = result.split(`image=img/lib/${ref}`).join(`image=${dataUri}`);
+			} else {
+				missing.push(ref);
 			}
 		}
-		return result;
+		return { xml: result, missing };
 	}
 
-	private async resolveImageDataUri(
+	/** Resolve an SVG ref to a data URI from cache/disk only (no download). */
+	private async resolveLocalImageDataUri(
 		relPath: string,
 		adapter: DataAdapter,
 		stencilsDir: string,
@@ -142,41 +152,66 @@ class StencilManager {
 		const cached = imageDataUriCache.get(relPath);
 		if (cached !== undefined) return cached;
 
-		// Try local cache first, then download from GitHub.
 		const localPath = normalizePath(`${stencilsDir}/img/${relPath}`);
-		let svgContent: string | null = null;
-
-		if (await adapter.exists(localPath)) {
-			svgContent = await adapter.read(localPath);
-		} else {
-			try {
-				const response = await requestUrl({ url: `${IMG_RAW_BASE}${relPath}`, method: 'GET' });
-				svgContent = response.text;
-				// Persist so future sessions skip the network.
-				const dir = localPath.substring(0, localPath.lastIndexOf('/'));
-				if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
-				await adapter.write(localPath, svgContent);
-			} catch {
-				// Network failure — don't cache, will retry on next open.
-				return '';
-			}
-		}
-
+		if (!(await adapter.exists(localPath))) return '';
+		const svgContent = await adapter.read(localPath);
 		if (!svgContent) return '';
-		// Use URL-encoded SVG (not base64) so the data URI contains no literal ';'.
-		// @maxgraph parses style strings by splitting on ';', so a base64 data URI
-		// like "data:image/svg+xml;base64,..." would be truncated at the first ';'.
+		// URL-encoded (not base64) so the data URI has no literal ';' — @maxgraph
+		// splits style strings on ';' and would truncate a base64 URI.
 		const dataUri = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
 		imageDataUriCache.set(relPath, dataUri);
 		return dataUri;
 	}
 
+	/** Download a single SVG image from GitHub into the local img cache. */
+	async downloadImage(
+		relPath: string,
+		adapter: DataAdapter,
+		stencilsDir: string,
+	): Promise<void> {
+		const response = await requestUrl({ url: `${IMG_RAW_BASE}${relPath}`, method: 'GET' });
+		const localPath = normalizePath(`${stencilsDir}/img/${relPath}`);
+		const dir = localPath.substring(0, localPath.lastIndexOf('/'));
+		if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+		await adapter.write(localPath, response.text);
+	}
+
 	/**
-	 * Detect, load and register all stencil libs needed by a page.
-	 * Automatically downloads any lib not found locally.
-	 * Returns the final set of loaded lib stems and any that failed.
-	 * Used by the viewer for fully automatic lib management.
+	 * Register stencil libs that are ALREADY on disk (no network).
+	 * Skips libs already in the session cache.  Missing-from-disk libs are
+	 * silently skipped — the caller detects and prompts for those separately.
+	 * Runs before the first paint so locally-available shapes render in one pass.
 	 */
+	async registerLocalLibs(
+		libs: string[],
+		adapter: DataAdapter,
+		stencilsDir: string,
+		userDir: string | null,
+	): Promise<void> {
+		for (const lib of libs) {
+			if (loadedLibStems.has(lib)) continue;
+			const entry = OFFICIAL_LIBS.find(e => e.file === lib);
+			try {
+				if (entry?.isDir) {
+					const localDir = normalizePath(`${stencilsDir}/${lib}`);
+					if (!(await adapter.exists(localDir))) continue;
+					const listing = await adapter.list(localDir);
+					const files = listing.files.filter(f => f.endsWith('.xml'));
+					if (files.length === 0) continue;
+					await Promise.all(files.map(async f => { this.registerXml(await adapter.read(f)); }));
+					loadedLibStems.add(lib);
+				} else {
+					const content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
+					if (content === null) continue;
+					this.registerXml(content);
+					loadedLibStems.add(lib);
+				}
+			} catch {
+				// Ignore — treated as missing and surfaced via the banner.
+			}
+		}
+	}
+
 	/** Libs that are needed, not yet in session cache, AND not present on disk. */
 	async findMissingLibs(
 		libs: string[],
@@ -192,23 +227,6 @@ class StencilManager {
 			}
 		}
 		return missing;
-	}
-
-	/** Libs that are needed, not in session cache, BUT already on disk. */
-	async findUnloadedLocalLibs(
-		libs: string[],
-		adapter: DataAdapter,
-		stencilsDir: string,
-		userDir: string | null,
-	): Promise<string[]> {
-		const unloaded: string[] = [];
-		for (const lib of libs) {
-			if (loadedLibStems.has(lib)) continue;
-			if (await this.isLibOnDisk(lib, adapter, stencilsDir, userDir)) {
-				unloaded.push(lib);
-			}
-		}
-		return unloaded;
 	}
 
 	private async isLibOnDisk(
@@ -229,40 +247,6 @@ class StencilManager {
 			if (await adapter.exists(normalizePath(`${userDir}/${lib}.xml`))) return true;
 		}
 		return false;
-	}
-
-	async loadAndRegisterLibs(
-		libs: string[],
-		adapter: DataAdapter,
-		stencilsDir: string,
-		userDir: string | null,
-	): Promise<{ loaded: string[]; failed: string[] }> {
-		const loaded: string[] = [];
-		const failed: string[] = [];
-		for (const lib of libs) {
-			// Session-level cache: skip I/O if already loaded this session.
-			if (loadedLibStems.has(lib)) { loaded.push(lib); continue; }
-
-			const entry = OFFICIAL_LIBS.find(e => e.file === lib);
-			try {
-				if (entry?.isDir) {
-					await this.loadDirLib(lib, adapter, stencilsDir);
-				} else {
-					let content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
-					if (content === null) {
-						await this.downloadLib(lib, adapter, stencilsDir);
-						content = await adapter.read(normalizePath(`${stencilsDir}/${lib}.xml`));
-					}
-					this.registerXml(content);
-				}
-				loadedLibStems.add(lib);
-				loaded.push(lib);
-			} catch {
-				console.error(`drawio-view: failed to load ${lib}`);
-				failed.push(lib);
-			}
-		}
-		return { loaded, failed };
 	}
 
 	/** Load (or download) all XML files in a directory-based stencil lib. */
@@ -302,30 +286,6 @@ class StencilManager {
 			const content = await adapter.read(filePath);
 			this.registerXml(content);
 		}));
-	}
-
-	/**
-	 * Load declared libs from disk and register them.
-	 * Returns which libs were loaded and which are missing locally.
-	 */
-	async loadForViewer(
-		libs: string[],
-		adapter: DataAdapter,
-		stencilsDir: string,
-		userDir: string | null,
-	): Promise<{ loaded: string[]; notDownloaded: string[] }> {
-		const loaded: string[] = [];
-		const notDownloaded: string[] = [];
-		for (const lib of libs) {
-			const content = await this.readLibFile(lib, adapter, stencilsDir, userDir);
-			if (content !== null) {
-				this.registerXml(content);
-				loaded.push(lib);
-			} else {
-				notDownloaded.push(lib);
-			}
-		}
-		return { loaded, notDownloaded };
 	}
 
 	private async readLibFile(

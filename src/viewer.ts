@@ -125,11 +125,7 @@ export class DrawioViewer extends Component {
 				const page = this.pages[this.currentPage];
 				if (page) {
 					this.controller?.clearVisual();
-					const processedXml = await stencilManager.preloadImages(
-						page.xml,
-						this.app.vault.adapter,
-						this.stencilsDir,
-					);
+					const processedXml = await this.prepareForRender(page.xml);
 					// Preserve current pan/zoom: loadXml resets the @maxgraph view.
 					const bbox = this.renderer.loadXmlPreserveView(processedXml);
 					this.currentBbox = bbox;
@@ -398,17 +394,11 @@ export class DrawioViewer extends Component {
 		// Reset the visual CSS transform when (re)loading a page.
 		this.controller?.clearVisual();
 
-		// Replace image=img/lib/... with data URIs, then render immediately.
-		// Stencil lib detection runs in parallel after rendering so it never blocks.
-		const processedXml = await stencilManager.preloadImages(
-			page.xml,
-			this.app.vault.adapter,
-			this.stencilsDir,
-		);
+		// Register locally-cached libs + inline local SVGs BEFORE the first paint
+		// so everything already downloaded renders correctly in a single pass.
+		// Only genuinely-missing (network-required) libs are deferred to a banner.
+		const processedXml = await this.prepareForRender(page.xml);
 		const bbox = this.renderer.loadXml(processedXml);
-
-		// Detect + handle stencil libs without blocking the render.
-		void this.checkStencilLibs(page.xml);
 		this.currentBbox = bbox;
 
 		if (this.options.zoom > 0 && this.options.offsetSpecified) {
@@ -481,52 +471,70 @@ export class DrawioViewer extends Component {
 		return parts.join('|');
 	}
 
-	// ── Stencil lib detection + banner ───────────────────────────────────────
+	// ── Stencil libs: local-first render + missing-lib download prompt ────────
+
+	/** Libs (stencil stems) waiting for the user to trigger a download. */
+	private pendingStencils: string[] = [];
+	/** SVG image ref paths waiting for the user to trigger a download. */
+	private pendingImages: string[] = [];
 
 	/**
-	 * Run after render (fire-and-forget).
-	 * 1. Detect which stencil libs the current page uses.
-	 * 2. If any are on disk but not yet in the session registry → load silently + re-render.
-	 * 3. If any are not on disk at all → show download prompt banner.
+	 * Register locally-cached stencil libs and inline locally-cached SVGs, then
+	 * return the render-ready XML.  Runs BEFORE the first paint so everything
+	 * already on disk renders in one pass.  Genuinely-missing (network-required)
+	 * libs are detected in the background and surfaced via a banner — they never
+	 * block or double-render.
 	 */
-	private async checkStencilLibs(pageXml: string): Promise<void> {
-		const neededLibs = stencilManager.detectUsedLibs(pageXml);
-		if (neededLibs.length === 0) { this.libsBannerEl?.removeClass('is-visible'); return; }
-
+	private async prepareForRender(pageXml: string): Promise<string> {
 		const adapter = this.app.vault.adapter;
 		const userDir = this.settings.customStencilDir?.trim() || null;
 
-		// Load any libs that are already on disk but not yet registered this session.
-		const unloadedLocal = await stencilManager.findUnloadedLocalLibs(neededLibs, adapter, this.stencilsDir, userDir);
-		if (unloadedLocal.length > 0) {
-			await stencilManager.loadAndRegisterLibs(unloadedLocal, adapter, this.stencilsDir, userDir);
-			// Re-render so the newly registered shapes display correctly.
-			void this.renderCurrentPage();
+		const neededLibs = stencilManager.detectUsedLibs(pageXml);
+		if (neededLibs.length > 0) {
+			await stencilManager.registerLocalLibs(neededLibs, adapter, this.stencilsDir, userDir);
+		}
+		const { xml, missing: missingImages } = await stencilManager.preloadImages(
+			pageXml, adapter, this.stencilsDir,
+		);
+
+		// Detect what's still missing from disk (background — no blocking).
+		void this.checkMissingLibs(neededLibs, missingImages);
+		return xml;
+	}
+
+	private async checkMissingLibs(neededLibs: string[], missingImages: string[]): Promise<void> {
+		const adapter = this.app.vault.adapter;
+		const userDir = this.settings.customStencilDir?.trim() || null;
+		const missingStencils = await stencilManager.findMissingLibs(
+			neededLibs, adapter, this.stencilsDir, userDir,
+		);
+
+		this.pendingStencils = missingStencils;
+		this.pendingImages = missingImages;
+
+		if (missingStencils.length === 0 && missingImages.length === 0) {
+			this.libsBannerEl?.removeClass('is-visible');
 			return;
 		}
 
-		// Find libs that are missing from disk entirely.
-		const missing = await stencilManager.findMissingLibs(neededLibs, adapter, this.stencilsDir, userDir);
-		if (missing.length > 0) {
-			this.showLibsBanner(missing);
-		} else {
-			this.libsBannerEl?.removeClass('is-visible');
-		}
+		// Build human-readable names: stencil libs by catalog name, image refs by
+		// their top-level lib folder (e.g. "ibm/social/x.svg" → "IBM").
+		const stencilNames = missingStencils.map(lib =>
+			OFFICIAL_LIBS.find(e => e.file === lib)?.name ?? lib);
+		const imageLibStems = [...new Set(missingImages.map(r => r.split('/')[0]!))];
+		const imageNames = imageLibStems.map(stem =>
+			OFFICIAL_LIBS.find(e => e.file === stem)?.name ?? stem);
+		this.showLibsBanner([...new Set([...stencilNames, ...imageNames])]);
 	}
 
-	private showLibsBanner(missingLibs: string[]): void {
+	private showLibsBanner(names: string[]): void {
 		const banner = this.libsBannerEl;
 		if (!banner) return;
 		banner.empty();
 
-		const names = missingLibs.map(lib => {
-			const entry = OFFICIAL_LIBS.find(e => e.file === lib);
-			return entry?.name ?? lib;
-		});
-
 		banner.createEl('span', {
 			cls: 'drawio-libs-banner-msg',
-			text: `Shapes need: ${names.join(', ')}`,
+			text: `Missing shape libraries: ${names.join(', ')}`,
 		});
 		const actions = banner.createDiv('drawio-libs-banner-actions');
 
@@ -535,9 +543,9 @@ export class DrawioViewer extends Component {
 			attr: { role: 'button', tabindex: '0' },
 			text: 'Download',
 		});
-		this.registerDomEvent(dlBtn, 'click', () => { void this.downloadLibs(missingLibs, banner); });
+		this.registerDomEvent(dlBtn, 'click', () => { void this.downloadPending(); });
 		this.registerDomEvent(dlBtn, 'keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void this.downloadLibs(missingLibs, banner); }
+			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void this.downloadPending(); }
 		});
 
 		const dismissBtn = actions.createEl('span', {
@@ -550,43 +558,39 @@ export class DrawioViewer extends Component {
 		banner.addClass('is-visible');
 	}
 
-	private async downloadLibs(libs: string[], banner: HTMLElement): Promise<void> {
+	private async downloadPending(): Promise<void> {
+		const banner = this.libsBannerEl;
+		if (!banner) return;
 		const adapter = this.app.vault.adapter;
 		const userDir = this.settings.customStencilDir?.trim() || null;
+		const stencils = this.pendingStencils;
+		const images = this.pendingImages;
+
 		banner.empty();
-		const msg = banner.createEl('span', {
-			cls: 'drawio-libs-banner-msg',
-			text: `Downloading ${libs.join(', ')}…`,
-		});
+		const msg = banner.createEl('span', { cls: 'drawio-libs-banner-msg', text: 'Downloading…' });
 
-		let done = 0;
-		const results = await Promise.allSettled(
-			libs.map(async lib => {
-				await stencilManager.downloadLib(lib, adapter, this.stencilsDir);
-				done++;
-				msg.setText(`Downloading… ${done}/${libs.length}`);
-			}),
-		);
+		const results = await Promise.allSettled([
+			...stencils.map(lib => stencilManager.downloadLib(lib, adapter, this.stencilsDir)),
+			...images.map(ref => stencilManager.downloadImage(ref, adapter, this.stencilsDir)),
+		]);
 
-		const failed = libs.filter((_, i) => results[i]?.status === 'rejected');
-		if (failed.length > 0) {
+		if (results.some(r => r.status === 'rejected')) {
 			banner.empty();
 			banner.createEl('span', {
 				cls: 'drawio-libs-banner-msg drawio-libs-banner-error',
-				text: `Failed to download: ${failed.join(', ')} — check network.`,
+				text: 'Some downloads failed — check your network and reload.',
 			});
-			const dismissBtn = banner.createDiv('drawio-libs-banner-actions').createEl('span', {
-				cls: 'drawio-libs-banner-btn',
-				attr: { role: 'button', tabindex: '0' },
-				text: '✕',
+			const dismiss = banner.createDiv('drawio-libs-banner-actions').createEl('span', {
+				cls: 'drawio-libs-banner-btn', attr: { role: 'button', tabindex: '0' }, text: '✕',
 			});
-			this.registerDomEvent(dismissBtn, 'click', () => { banner.removeClass('is-visible'); });
+			this.registerDomEvent(dismiss, 'click', () => { banner.removeClass('is-visible'); });
 			return;
 		}
 
-		// Load newly downloaded libs and re-render.
+		msg.setText('Done — rendering…');
+		// Register the newly downloaded stencil libs, then re-render once.
+		await stencilManager.registerLocalLibs(stencils, adapter, this.stencilsDir, userDir);
 		banner.removeClass('is-visible');
-		await stencilManager.loadAndRegisterLibs(libs, adapter, this.stencilsDir, userDir);
 		void this.renderCurrentPage();
 	}
 
