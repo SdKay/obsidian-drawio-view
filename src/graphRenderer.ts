@@ -94,6 +94,22 @@ export class GraphRenderer {
 	}
 
 	/**
+	 * Like loadXml but restores the current scale/translate after import.
+	 * Used for soft-reloads (external file edits) where the user's pan/zoom
+	 * position must be preserved — loadXml resets the view to (0,0).
+	 */
+	loadXmlPreserveView(xmlString: string): BoundingBox {
+		const view = this.graph.getView();
+		const scale = view.getScale();
+		const translate = view.getTranslate();
+		const serializer = new ModelXmlSerializer(this.graph.getDataModel());
+		serializer.import(preprocessXml(xmlString));
+		view.scaleAndTranslate(scale, translate.x, translate.y);
+		const b = this.graph.getGraphBounds();
+		return { x: b.x, y: b.y, width: b.width, height: b.height };
+	}
+
+	/**
 	 * Centre the diagram in cw×ch at a fixed zoom level (no scaling to fit).
 	 * Used when the user specifies a zoom % but no explicit pan offset.
 	 */

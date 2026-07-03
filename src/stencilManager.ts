@@ -243,10 +243,11 @@ class StencilManager {
 			}
 		}
 
-		for (const filePath of files) {
+		// Read all XML files in parallel to minimise I/O latency.
+		await Promise.all(files.map(async filePath => {
 			const content = await adapter.read(filePath);
 			this.registerXml(content);
-		}
+		}));
 	}
 
 	/**

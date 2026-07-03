@@ -143,7 +143,8 @@ export class DrawioViewer extends Component {
 						this.app.vault.adapter,
 						this.stencilsDir,
 					);
-					const bbox = this.renderer.loadXml(processedXml);
+					// Preserve current pan/zoom: loadXml resets the @maxgraph view.
+					const bbox = this.renderer.loadXmlPreserveView(processedXml);
 					this.currentBbox = bbox;
 					this.updateStatus();
 				}
@@ -434,13 +435,10 @@ export class DrawioViewer extends Component {
 			? await stencilManager.loadAndRegisterLibs(neededLibs, this.app.vault.adapter, this.stencilsDir, userDir)
 			: { failed: [] as string[] };
 
-		// Update code block if libs changed (acts as a cache for next open).
-		const sortedNeeded = [...neededLibs].sort();
-		const sortedCurrent = [...this.options.libs].sort();
-		if (sortedNeeded.join(',') !== sortedCurrent.join(',')) {
-			this.options.libs = sortedNeeded;
-			if (this.onUpdate) void this.onUpdate(this.buildParamString());
-		}
+		// Update libs in memory only — writing to code block would trigger a
+		// vault.process + Obsidian re-render, causing a scroll jump and double render.
+		// Libs are persisted to code block when the user clicks ⊙ (applyCurrentView).
+		this.options.libs = [...neededLibs].sort();
 
 		// ⚠ only when a download failed (network error).
 		this.stencilWarningBtn?.toggleClass('is-visible', failed.length > 0);
