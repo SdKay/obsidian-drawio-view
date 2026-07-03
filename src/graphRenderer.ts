@@ -94,17 +94,22 @@ export class GraphRenderer {
 	}
 
 	/**
-	 * Like loadXml but restores the current scale/translate after import.
+	 * Like loadXml but restores the current view after import.
 	 * Used for soft-reloads (external file edits) where the user's pan/zoom
-	 * position must be preserved — loadXml resets the view to (0,0).
+	 * position must be preserved.
+	 *
+	 * We save/restore the *screen-pixel* display offset rather than the raw
+	 * graph-coord translate, because serializer.import() triggers endUpdate()
+	 * which fires a view refresh that can reset the graph-coordinate translate.
+	 * Using setViewFromDisplay (same as normal rendering) recomputes the correct
+	 * graph-coord translate for the new model, keeping the visual position stable.
 	 */
 	loadXmlPreserveView(xmlString: string): BoundingBox {
-		const view = this.graph.getView();
-		const scale = view.getScale();
-		const translate = view.getTranslate();
+		const zoomPct = this.getScale() * 100;
+		const offset = this.getDisplayOffset();
 		const serializer = new ModelXmlSerializer(this.graph.getDataModel());
 		serializer.import(preprocessXml(xmlString));
-		view.scaleAndTranslate(scale, translate.x, translate.y);
+		this.setViewFromDisplay(zoomPct, offset.x, offset.y);
 		const b = this.graph.getGraphBounds();
 		return { x: b.x, y: b.y, width: b.width, height: b.height };
 	}
