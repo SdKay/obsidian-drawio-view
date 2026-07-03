@@ -678,10 +678,16 @@ export class DrawioViewer extends Component {
 							this.tooltipTextEl.setText('');
 							this.tooltipTextEl.removeClass('is-visible');
 						}
+						// Anchor tooltip to the center of the shape.
+						// shape.bounds are in panEl local coords; apply the visual
+						// transform to get graphEl-relative pixels.
 						const cRect = this.container.getBoundingClientRect();
+						const gRect = graphEl.getBoundingClientRect();
+						const cx = (shape.bounds.x + shape.bounds.w / 2) * v.scale + v.tx + (gRect.left - cRect.left);
+						const cy = (shape.bounds.y + shape.bounds.h / 2) * v.scale + v.ty + (gRect.top  - cRect.top);
 						this.tooltipEl.setCssProps({
-							'--dv-tip-x': `${Math.round(clientX - cRect.left + 12)}px`,
-							'--dv-tip-y': `${Math.round(clientY - cRect.top  + 16)}px`,
+							'--dv-tip-x': `${Math.round(cx)}px`,
+							'--dv-tip-y': `${Math.round(cy)}px`,
 						});
 						this.tooltipEl.addClass('is-visible');
 					} else {
