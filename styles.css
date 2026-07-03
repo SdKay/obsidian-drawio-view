@@ -89,14 +89,11 @@
     overflow: visible;
 }
 
-/* At non-integer zoom levels, floating-point coordinate rounding can
-   turn orthogonal edge stubs into faint diagonals.  crispEdges snaps
-   line geometry to pixel boundaries, keeping right-angle bends clean.
-   Applied broadly within the SVG so all nested paths are covered. */
-.drawio-view-graph svg path,
+/* crispEdges on straight lines prevents half-pixel diagonal blur at
+   non-integer zoom levels.  Excluded from path (used by curves/arcs)
+   so rounded shapes like curlyBracket render smoothly. */
 .drawio-view-graph svg line,
 .drawio-view-graph svg polyline,
-.drawio-view-graph path,
 .drawio-view-graph line,
 .drawio-view-graph polyline {
     shape-rendering: crispEdges;
