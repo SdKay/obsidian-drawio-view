@@ -357,7 +357,7 @@ function preprocessXml(xml: string): string {
  * style-attribute strings.
  */
 function applyStyleFixes(s: string): string {
-	return s
+	let result = s
 		// draw.io "default" colour tokens → resolve to black
 		.replace(/strokeColor=default/g, 'strokeColor=#000000')
 		.replace(/fontColor=default/g, 'fontColor=#000000')
@@ -368,4 +368,18 @@ function applyStyleFixes(s: string): string {
 		// property survives the merge and renders correctly.
 		.replace(/\bfillColor=none\b/g, 'fillColor=transparent')
 		.replace(/\bstrokeColor=none\b/g, 'strokeColor=transparent');
+
+	// draw.io/mxGraph default anchorPointDirection to true and only ever emit
+	// it when explicitly disabled (=0) — so exported XML never sets it for the
+	// common case.  @maxgraph/core's getConnectionPoint requires it to be
+	// explicitly truthy before it rotates fixed entry/exit anchors (entryX/
+	// entryY/exitX/exitY) to match a rotated `direction`.  Without this fix,
+	// edges with fixed connection points on a direction=north/south/west shape
+	// anchor to the wrong corner.  direction=east is the unrotated default and
+	// is unaffected either way, so only the other three values need the fix.
+	if (/\bdirection=(north|south|west)\b/.test(result) && !/\banchorPointDirection=/.test(result)) {
+		result += ';anchorPointDirection=1;';
+	}
+
+	return result;
 }
