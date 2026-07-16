@@ -1,6 +1,6 @@
 import { requestUrl, normalizePath } from 'obsidian';
 import type { DataAdapter, Vault } from 'obsidian';
-import { StencilShape, StencilShapeRegistry } from '@maxgraph/core';
+import { StencilShape, StencilShapeRegistry, ShapeRegistry } from '@maxgraph/core';
 import { parseDrawioFile } from './parser';
 
 // Module-level caches, live for the whole Obsidian session.
@@ -42,6 +42,7 @@ export const OFFICIAL_LIBS: LibEntry[] = [
 	{ name: 'EIP',                        file: 'eip',         category: 'Software' },
 	{ name: 'Bootstrap',                  file: 'bootstrap',   category: 'Software' },
 	// General
+	{ name: 'Basic',                      file: 'basic',       category: 'General' },
 	{ name: 'Mockup',                     file: 'mockup',      category: 'General', isDir: true },
 	{ name: 'Floorplan',                  file: 'floorplan',   category: 'General' },
 	{ name: 'Signs / Wayfinding',         file: 'signs',       category: 'General', isDir: true },
@@ -89,11 +90,20 @@ class StencilManager {
 	 * Returns the set of lib file-name stems referenced (e.g. ['aws4', 'azure']).
 	 */
 	detectUsedLibs(pageXml: string): string[] {
-		const pattern = /shape=mxgraph\.([a-zA-Z0-9_]+)\./g;
+		// Capture the full shape name (group 1) as well as the lib prefix
+		// (group 2).  Some `mxgraph.<lib>.<name>` shapes — e.g.
+		// mxgraph.basic.polygon — are draw.io built-ins with no stencil XML
+		// counterpart; once natively ported (see builtinShapes.ts) they
+		// resolve via @maxgraph's ShapeRegistry and must NOT be reported as
+		// needing a library download.
+		const pattern = /shape=(mxgraph\.([a-zA-Z0-9_]+)\.[a-zA-Z0-9_.]+)/g;
 		const found = new Set<string>();
 		let m: RegExpExecArray | null;
 		while ((m = pattern.exec(pageXml)) !== null) {
-			found.add(m[1]!);
+			const fullName = m[1]!;
+			const lib = m[2]!;
+			if (ShapeRegistry.get(fullName)) continue; // natively supported — no download needed
+			found.add(lib);
 		}
 		return [...found];
 	}

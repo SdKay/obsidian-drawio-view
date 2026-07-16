@@ -270,16 +270,23 @@ export class GraphRenderer {
 	/**
 	 * Return the shape cell (id + optional link) at panEl-relative coordinates,
 	 * for ANY non-layer vertex/edge — not just linked cells.
-	 * Sub-cells (labels etc.) are resolved up to their parent shape cell.
+	 * Sub-cells with no real geometry of their own (e.g. a relative-positioned
+	 * label) are resolved up to their parent shape cell.  A cell with its own
+	 * absolute, non-zero-size geometry is treated as a real shape and kept as
+	 * -is — this matters for children of a `group` container (an invisible
+	 * logical wrapper, see the 'group' base style below): each child is an
+	 * independently meaningful shape and must be highlighted on its own, not
+	 * expanded to the group's full bounding box.
 	 */
 	getShapeAt(px: number, py: number): { id: string; link: string | null; bounds: { x: number; y: number; w: number; h: number } } | null {
 		const cell = this.graph.getCellAt(px, py);
 		if (!cell) return null;
 		const dm = this.graph.getDataModel();
 		if (dm.isLayer(cell)) return null;
-		// If the hit cell's parent is a non-layer cell, it's a sub-cell — use the parent.
+		const geo = cell.getGeometry();
+		const hasOwnShape = !!geo && !geo.relative && geo.width > 0 && geo.height > 0;
 		const parent = cell.getParent();
-		const shapeCell = (parent && !dm.isLayer(parent)) ? parent : cell;
+		const shapeCell = (!hasOwnShape && parent && !dm.isLayer(parent)) ? parent : cell;
 		const id = shapeCell.id;
 		if (!id) return null;
 		const state = this.graph.getView().getState(shapeCell);
