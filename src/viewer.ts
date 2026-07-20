@@ -54,6 +54,15 @@ export class DrawioViewer extends Component {
 	private readonly stencilsDir: string;
 	/** Banner shown when stencil libs need to be downloaded. */
 	private libsBannerEl: HTMLElement | null = null;
+	/**
+	 * Set in onunload().  Fire-and-forget async chains (file reload debounce,
+	 * stencil-lib download) can still be in flight when the component unloads —
+	 * this flag lets them bail out instead of touching stale DOM refs or
+	 * constructing a new GraphRenderer that would never get destroy()'d.
+	 */
+	private unloaded = false;
+	/** Debounced .drawio-file-modify → soft-reload timer; cleared in onunload(). */
+	private reloadTimer = 0;
 
 	constructor(
 		app: App,
@@ -91,13 +100,12 @@ export class DrawioViewer extends Component {
 		}
 		void this.verifyAndRender(file, cached);
 
-		let reloadTimer = 0;
 		this.registerEvent(
 			this.app.vault.on('modify', (changedFile) => {
 				if (!(changedFile instanceof TFile) || changedFile.path !== file.path) return;
-				window.clearTimeout(reloadTimer);
-				reloadTimer = window.setTimeout(() => {
-					reloadTimer = 0;
+				window.clearTimeout(this.reloadTimer);
+				this.reloadTimer = window.setTimeout(() => {
+					this.reloadTimer = 0;
 					void this.reloadFile(changedFile);
 				}, 400);
 			}),
@@ -154,7 +162,9 @@ export class DrawioViewer extends Component {
 	}
 
 	onunload(): void {
+		this.unloaded = true;
 		if (this.hideTooltipTimer) { window.clearTimeout(this.hideTooltipTimer); this.hideTooltipTimer = 0; }
+		if (this.reloadTimer) { window.clearTimeout(this.reloadTimer); this.reloadTimer = 0; }
 		this.renderer?.destroy();
 		this.renderer = null;
 	}
@@ -372,6 +382,7 @@ export class DrawioViewer extends Component {
 	}
 
 	private async renderCurrentPage(): Promise<void> {
+		if (this.unloaded) return;
 		const graphEl = this.graphEl;
 		const panEl = this.panEl;
 		if (!graphEl || !panEl) return;
@@ -401,6 +412,9 @@ export class DrawioViewer extends Component {
 		// so everything already downloaded renders correctly in a single pass.
 		// Only genuinely-missing (network-required) libs are deferred to a banner.
 		const processedXml = await this.prepareForRender(page.xml);
+		// The component may have unloaded while prepareForRender was awaiting
+		// (e.g. a network stencil check) — bail rather than touch a null renderer.
+		if (this.unloaded || !this.renderer) return;
 		const bbox = this.renderer.loadXml(processedXml);
 		this.currentBbox = bbox;
 
@@ -511,6 +525,7 @@ export class DrawioViewer extends Component {
 		const missingStencils = await stencilManager.findMissingLibs(
 			neededLibs, adapter, this.stencilsDir, userDir,
 		);
+		if (this.unloaded) return;
 
 		this.pendingStencils = missingStencils;
 		this.pendingImages = missingImages;
@@ -595,6 +610,10 @@ export class DrawioViewer extends Component {
 			...stencils.map(lib => stencilManager.downloadLib(lib, adapter, this.stencilsDir)),
 			...images.map(ref => stencilManager.downloadImage(ref, adapter, this.stencilsDir)),
 		]);
+		// Component may have unloaded while the downloads were in flight — the
+		// banner DOM is stale and renderCurrentPage() would otherwise resurrect
+		// a GraphRenderer that nothing will ever destroy().
+		if (this.unloaded) return;
 
 		if (results.some(r => r.status === 'rejected')) {
 			banner.empty();
@@ -745,7 +764,9 @@ export class DrawioViewer extends Component {
 
 	private navigateLink(href: string): void {
 		if (/^https?:\/\//i.test(href)) {
-			window.open(href, '_blank');
+			// activeWindow (not the bare global) so this opens correctly when the
+			// note is viewed in an Obsidian popout window.
+			activeWindow.open(href, '_blank');
 			return;
 		}
 		// Strip [[...]] wikilink brackets if present, then let Obsidian resolve.
