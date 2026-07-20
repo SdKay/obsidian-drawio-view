@@ -74,6 +74,13 @@ export class GraphRenderer {
 		// a black border around every grouped selection.  Register it transparent.
 		stylesheet.putCellStyle('group', { fillColor: 'transparent', strokeColor: 'transparent' });
 
+		// draw.io plain text labels use style="text;..." — draw.io's own editor
+		// stylesheet defines a 'text' entry as fillColor=none;strokeColor=none
+		// (no box around the label), but @maxgraph ships no such base style, so
+		// text cells fell back to the default vertex style below and rendered
+		// with an unwanted white fill + black border. Register it borderless.
+		stylesheet.putCellStyle('text', { fillColor: 'none', strokeColor: 'none' });
+
 		// @maxgraph's built-in default vertex style has fillColor:#C3D9FF,
 		// strokeColor:#6482B9, fontColor:#774400 — these are NOT draw.io's
 		// defaults and cause unwanted blue fills and coloured borders/text on
