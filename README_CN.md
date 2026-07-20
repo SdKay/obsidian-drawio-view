@@ -35,6 +35,12 @@
   <br/><sub>关注微信公众号，获取更多 Obsidian 插件与工具</sub>
 </p>
 
+<p>
+  🧩 顺便看看我的另一个插件 <b>Rich Table</b> —— 支持合并单元格、类型化列、样式与双向链接的交互式表格：
+  <a href="https://github.com/SdKay/obsidian-rich-table">GitHub</a> ·
+  <a href="obsidian://show-plugin?id=rich-table">去商店中安装</a>
+</p>
+
 </div>
 
 在 Obsidian 笔记中内嵌渲染 [draw.io](https://www.drawio.com/) `.drawio` 图表——支持流畅缩放平移、多页标签、图形链接，以及完整的三方图形库支持。

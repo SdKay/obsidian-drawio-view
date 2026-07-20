@@ -35,6 +35,12 @@
   <br/><sub>Follow on WeChat for more Obsidian plugins &amp; tools</sub>
 </p>
 
+<p>
+  🧩 Also check out <b>Rich Table</b> — interactive tables with merges, typed columns, styles, and wikilinks:
+  <a href="https://github.com/SdKay/obsidian-rich-table">GitHub</a> ·
+  <a href="obsidian://show-plugin?id=rich-table">Install from Store</a>
+</p>
+
 </div>
 
 Render [draw.io](https://www.drawio.com/) `.drawio` diagrams inline inside your Obsidian notes — with smooth zoom, pan, multi-page tabs, shape links, and full support for third-party shape libraries.
