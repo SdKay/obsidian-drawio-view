@@ -12,6 +12,8 @@ export interface DrawioPage {
 
 export interface DrawioFile {
 	pages: DrawioPage[];
+	/** Set when the XML failed to parse; mirrors the message draw.io's own app shows. */
+	error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -33,7 +35,8 @@ export function parseDrawioCached(content: string): DrawioFile {
 
 export function parseDrawioFile(content: string): DrawioFile {
 	const doc = new DOMParser().parseFromString(content, 'application/xml');
-	if (doc.querySelector('parsererror')) return { pages: [] };
+	const parserError = doc.querySelector('parsererror');
+	if (parserError) return { pages: [], error: extractParserErrorMessage(parserError) };
 
 	const diagrams = Array.from(doc.querySelectorAll('mxfile > diagram'));
 	if (diagrams.length === 0) {
@@ -61,6 +64,17 @@ export function parseDrawioFile(content: string): DrawioFile {
 			return { name, id, xml };
 		}),
 	};
+}
+
+// Chromium's <parsererror> textContent embeds the underlying libxml2 message,
+// e.g. "This page contains the following errors: error on line 33 at column
+// 67: attributes construct error Below is a rendering...". Pull out just the
+// "error on line N at column N: ..." fragment so it reads the same as the
+// message draw.io's own desktop app shows for the same malformed file.
+function extractParserErrorMessage(parserError: Element): string {
+	const text = parserError.textContent?.trim() ?? '';
+	const match = /error on line \d+ at column \d+:[^\n]*/i.exec(text);
+	return match ? match[0].trim() : text;
 }
 
 function serializeXml(el: Element): string {

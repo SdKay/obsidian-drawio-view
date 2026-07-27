@@ -182,7 +182,7 @@ export class DrawioViewer extends Component {
 		this.graphEl = this.panEl = this.statusEl = this.tabsEl = null;
 
 		if (this.pages.length === 0) {
-			this.container.createDiv({ cls: 'drawio-view-error', text: 'No diagrams found.' });
+			this.container.createDiv({ cls: 'drawio-view-error', text: drawio.error ?? 'No diagrams found.' });
 			return;
 		}
 		// Resolve page: by name first, then by index.
