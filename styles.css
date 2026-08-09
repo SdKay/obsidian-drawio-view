@@ -334,25 +334,28 @@
    Prefix .drawio-view-hud gives enough specificity to beat Obsidian's
    button base styles (e.g. button:not(.clickable-icon) { background: … }). */
 .drawio-view-hud .drawio-view-open-btn,
+.drawio-view-hud .drawio-view-fit-btn,
 .drawio-view-hud .drawio-view-update-btn {
     pointer-events: auto;
     background: transparent;
     border-right: 1px solid var(--background-modifier-border);
-    padding: 1px 6px;
+    padding: 2px 7px;
     cursor: pointer;
     color: var(--text-muted);
-    font-size: var(--font-ui-smaller);
+    font-size: var(--font-text-size);
     line-height: 1.4;
     user-select: none;
 }
 
 .drawio-view-hud .drawio-view-open-btn:hover,
+.drawio-view-hud .drawio-view-fit-btn:hover,
 .drawio-view-hud .drawio-view-update-btn:hover {
     color: var(--interactive-accent);
     background: transparent;
 }
 
 .drawio-view-hud .drawio-view-open-btn:focus-visible,
+.drawio-view-hud .drawio-view-fit-btn:focus-visible,
 .drawio-view-hud .drawio-view-update-btn:focus-visible {
     outline: 2px solid var(--interactive-accent);
     outline-offset: -2px;

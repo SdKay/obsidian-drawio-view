@@ -99,10 +99,11 @@ Go to **Settings → Draw.io View → Shape Libraries** to:
 | **Double-click** | Reset to initial view |
 | **Drag bottom edge** | Resize viewer height |
 | **↗** | Open file in system default editor |
+| **⛶** | Auto-fit to the viewer's current size |
 | **⊙** | Save current view back into the code block |
 | **Page tabs** | Switch pages (multi-page diagrams) |
 
-**Tip:** pan and zoom to the view you want, then click ⊙. The code block updates in-place and that view is restored every time you open the note.
+**Tip:** pan and zoom to the view you want, then click ⊙. The code block updates in-place and that view is restored every time you open the note. Once a specific zoom/offset is saved this way, double-click restores *that* saved view rather than auto-fitting — click ⛶ to get back to a fresh auto-fit (e.g. after resizing the viewer), then ⊙ again to save it.
 
 ### Shape links
 

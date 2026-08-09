@@ -1,10 +1,11 @@
-import { App, Component, TFile } from 'obsidian';
+import { App, Component, setTooltip, TFile } from 'obsidian';
 import { stencilManager, OFFICIAL_LIBS } from './stencilManager';
 import { parseDrawioCached, type ViewOptions, type DrawioPage } from './parser';
 import { GraphRenderer, type BoundingBox } from './graphRenderer';
 import type { DrawioViewSettings } from './settings';
 import { LinkEditorModal, patchCellLink } from './linkEditor';
 import { PanZoomController, type ViewportHost } from './viewportController';
+import { t } from './i18n';
 
 // Module-level cache of .drawio file CONTENT keyed by path.  Crucial for a
 // flash-free re-render: when the ⊙ button writes view params into the .md file,
@@ -230,20 +231,36 @@ export class DrawioViewer extends Component {
 
 		const openBtn = hud.createEl('span', {
 			cls: 'drawio-view-open-btn',
-			attr: { 'role': 'button', 'aria-label': 'Open in external editor', 'tabindex': '0' },
+			attr: { 'role': 'button', 'aria-label': t('openExternal'), 'tabindex': '0' },
 		});
+		setTooltip(openBtn, t('openExternal'));
 		openBtn.setText('↗');
 		this.registerDomEvent(openBtn, 'click', () => { this.openExternal(); });
 		this.registerDomEvent(openBtn, 'keydown', (e: KeyboardEvent) => {
 			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.openExternal(); }
 		});
 
+		// Always re-fits to the current viewer size, even once the code block
+		// has pinned an explicit zoom/offset (double-click's "reset" restores
+		// that pinned view instead — see resetView()). This is the only way
+		// back to auto-fit once a view has been pinned via ⊙.
+		const fitBtn = hud.createEl('span', {
+			cls: 'drawio-view-fit-btn',
+			attr: { 'role': 'button', 'aria-label': t('autoFit'), 'tabindex': '0' },
+		});
+		setTooltip(fitBtn, t('autoFit'));
+		fitBtn.setText('⛶');
+		this.registerDomEvent(fitBtn, 'click', () => { this.autoFitNow(); });
+		this.registerDomEvent(fitBtn, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.autoFitNow(); }
+		});
 
 		if (this.onUpdate) {
 			const btn = hud.createEl('span', {
 				cls: 'drawio-view-update-btn',
-				attr: { 'role': 'button', 'aria-label': 'Apply current view to code block', 'tabindex': '0' },
+				attr: { 'role': 'button', 'aria-label': t('applyView'), 'tabindex': '0' },
 			});
+			setTooltip(btn, t('applyView'));
 			btn.setText('⊙');
 			this.registerDomEvent(btn, 'click', () => {
 				this.applyCurrentView().catch(err => console.error('DrawioViewer update:', err));
@@ -270,8 +287,9 @@ export class DrawioViewer extends Component {
 		this.tooltipEl = this.container.createDiv('drawio-view-link-tooltip');
 		const tooltipEditBtn = this.tooltipEl.createEl('span', {
 			cls: 'drawio-view-tooltip-edit',
-			attr: { role: 'button', tabindex: '0', 'aria-label': 'Edit link' },
+			attr: { role: 'button', tabindex: '0', 'aria-label': t('editLink') },
 		});
+		setTooltip(tooltipEditBtn, t('editLink'));
 		this.tooltipTextEl = this.tooltipEl.createEl('span', { cls: 'drawio-view-tooltip-text' });
 		tooltipEditBtn.setText('✎');
 
@@ -306,7 +324,8 @@ export class DrawioViewer extends Component {
 
 	private buildResizeHandle(): void {
 		const handle = this.container.createDiv('drawio-view-resize-handle');
-		handle.setAttribute('aria-label', 'Drag to resize height');
+		handle.setAttribute('aria-label', t('resizeHandle'));
+		setTooltip(handle, t('resizeHandle'));
 
 		let resizing = false;
 		let startY = 0;
@@ -772,6 +791,15 @@ export class DrawioViewer extends Component {
 		// Strip [[...]] wikilink brackets if present, then let Obsidian resolve.
 		const cleaned = href.replace(/^\[\[(.+)\]\]$/, '$1');
 		void this.app.workspace.openLinkText(cleaned, this.sourcePath, false);
+	}
+
+	/** Re-fit the diagram to the current viewer size, ignoring any pinned zoom/offset. */
+	private autoFitNow(): void {
+		if (!this.renderer || !this.graphEl) return;
+		this.controller?.clearVisual();
+		const rect = this.graphEl.getBoundingClientRect();
+		this.renderer.autoFit(rect.width || 600, rect.height || 380, this.currentBbox);
+		this.updateStatus();
 	}
 
 	private resetView(): void {
