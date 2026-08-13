@@ -49,6 +49,16 @@ export class DrawioViewer extends Component {
 	/** Owns all viewport pan/zoom (mouse, touch, wheel) and the visual transform. */
 	private controller: PanZoomController | null = null;
 
+	// ── Magnifier (loupe) ──────────────────────────────────────────────────
+	private magnifierEl: HTMLElement | null = null;
+	private magnifierViewportEl: HTMLElement | null = null;
+	private magnifierBtnEl: HTMLElement | null = null;
+	private magnifierActive = false;
+	private magnifierZoom = 2.5;
+	private magnifierRadius = 90;
+	private magnifierMx = 0;
+	private magnifierMy = 0;
+
 	/** Vault-relative path of the note that contains this code block. */
 	private readonly sourcePath: string;
 
@@ -224,6 +234,11 @@ export class DrawioViewer extends Component {
 		this.panEl = this.graphEl.createDiv('drawio-view-pan');
 		this.highlightEl = this.panEl.createDiv('drawio-view-highlight');
 
+		// Magnifier (loupe): a circular viewport, sibling of panEl so it clips
+		// against graphEl's own overflow:hidden box. Empty/hidden until activated.
+		this.magnifierEl = this.graphEl.createDiv('drawio-view-magnifier');
+		this.magnifierViewportEl = this.magnifierEl.createDiv('drawio-view-magnifier-viewport');
+
 		// HUD: apply button (optional) + status text, bottom-right corner.
 		// Kept as a sibling of graphEl (not inside it) so @maxgraph's internal
 		// HTML-label overlay cannot interfere with its position.
@@ -253,6 +268,17 @@ export class DrawioViewer extends Component {
 		this.registerDomEvent(fitBtn, 'click', () => { this.autoFitNow(); });
 		this.registerDomEvent(fitBtn, 'keydown', (e: KeyboardEvent) => {
 			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.autoFitNow(); }
+		});
+
+		this.magnifierBtnEl = hud.createEl('span', {
+			cls: 'drawio-view-magnifier-btn',
+			attr: { 'role': 'button', 'aria-label': t('magnifier'), 'tabindex': '0' },
+		});
+		setTooltip(this.magnifierBtnEl, t('magnifier'));
+		this.magnifierBtnEl.setText('🔍');
+		this.registerDomEvent(this.magnifierBtnEl, 'click', () => { this.toggleMagnifier(); });
+		this.registerDomEvent(this.magnifierBtnEl, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.toggleMagnifier(); }
 		});
 
 		if (this.onUpdate) {
@@ -666,10 +692,13 @@ export class DrawioViewer extends Component {
 	private setupInteraction(graphEl: HTMLElement): void {
 		// Double-click → reset view.
 		this.registerDomEvent(graphEl, 'dblclick', (e: MouseEvent) => {
+			if (this.magnifierActive) return;
 			e.preventDefault();
 			e.stopPropagation();
 			this.resetView();
 		}, true);
+
+		this.setupMagnifierInteraction(graphEl);
 
 		// Pan / zoom / pinch are owned by PanZoomController (created alongside the
 		// renderer in renderCurrentPage).  What remains here is hover + link follow.
@@ -677,7 +706,7 @@ export class DrawioViewer extends Component {
 		// ── Hover cursor + link tooltip ───────────────────────────────────────
 		let hoverRaf = 0;
 		this.registerDomEvent(graphEl, 'mousemove', (e: MouseEvent) => {
-			if (hoverRaf || !this.renderer) return;
+			if (this.magnifierActive || hoverRaf || !this.renderer) return;
 			const clientX = e.clientX;
 			const clientY = e.clientY;
 			hoverRaf = window.requestAnimationFrame(() => {
@@ -754,7 +783,7 @@ export class DrawioViewer extends Component {
 		// Click: stop embed propagation; follow link when appropriate.
 		this.registerDomEvent(graphEl, 'click', (e: MouseEvent) => {
 			e.stopPropagation();
-			if (this.controller?.didGesture || !this.renderer) return;
+			if (this.magnifierActive || this.controller?.didGesture || !this.renderer) return;
 			const ctrlHeld = e.ctrlKey || e.metaKey;
 			// pan-first: Ctrl+click follows link; link-first: plain click follows link.
 			const shouldFollow = this.settings.panModifier === 'none' ? ctrlHeld : !ctrlHeld;
@@ -813,6 +842,107 @@ export class DrawioViewer extends Component {
 			this.renderer.autoFit(rect.width || 600, rect.height || 380, this.currentBbox);
 		}
 		this.updateStatus();
+	}
+
+	private readonly MAGNIFIER_RADIUS_MIN = 40;
+	private readonly MAGNIFIER_RADIUS_MAX = 260;
+	private readonly MAGNIFIER_RADIUS_STEP = 15;
+
+	/**
+	 * Wires the loupe: a document-wide capture-phase pointerdown listener
+	 * closes it on any click outside the toggle button (and, since capture
+	 * fires before any bubble-phase listener on graphEl, transparently blocks
+	 * the click-to-follow-link handler while active — PanZoomController's own
+	 * pan-start is blocked separately via setSuspended(), see toggleMagnifier).
+	 * Wheel is intentionally left alone — it keeps zooming the main view, the
+	 * magnifier's fixed magnifierZoom is assumed legible on its own.
+	 */
+	private setupMagnifierInteraction(graphEl: HTMLElement): void {
+		this.registerDomEvent(graphEl, 'mousemove', (e: MouseEvent) => {
+			if (!this.magnifierActive) return;
+			const rect = graphEl.getBoundingClientRect();
+			this.magnifierMx = e.clientX - rect.left;
+			this.magnifierMy = e.clientY - rect.top;
+			this.applyMagnifierTransform();
+		});
+
+		this.registerDomEvent(activeDocument, 'pointerdown', (e: PointerEvent) => {
+			if (!this.magnifierActive) return;
+			const target = e.target as Node | null;
+			if (this.magnifierBtnEl && (target === this.magnifierBtnEl || this.magnifierBtnEl.contains(target))) return;
+			e.preventDefault();
+			e.stopPropagation();
+			this.deactivateMagnifier();
+		}, true);
+
+		// Capture phase, and on activeDocument rather than graphEl: without this,
+		// CodeMirror's own keydown handling on the (still-focused) editor runs
+		// first — at the target phase, before the event ever bubbles up here —
+		// and types the "+"/"-" character into the note instead of resizing.
+		this.registerDomEvent(activeDocument, 'keydown', (e: KeyboardEvent) => {
+			if (!this.magnifierActive) return;
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				this.deactivateMagnifier();
+			} else if (e.key === '+' || e.key === '=') {
+				e.preventDefault();
+				e.stopPropagation();
+				this.magnifierRadius = Math.min(this.MAGNIFIER_RADIUS_MAX, this.magnifierRadius + this.MAGNIFIER_RADIUS_STEP);
+				this.applyMagnifierTransform();
+			} else if (e.key === '-' || e.key === '_') {
+				e.preventDefault();
+				e.stopPropagation();
+				this.magnifierRadius = Math.max(this.MAGNIFIER_RADIUS_MIN, this.magnifierRadius - this.MAGNIFIER_RADIUS_STEP);
+				this.applyMagnifierTransform();
+			}
+		}, true);
+	}
+
+	private toggleMagnifier(): void {
+		if (this.magnifierActive) { this.deactivateMagnifier(); return; }
+		if (!this.panEl || !this.graphEl || !this.magnifierEl || !this.magnifierViewportEl) return;
+		this.magnifierActive = true;
+		this.controller?.setSuspended(true);
+		this.graphEl.addClass('is-magnifying');
+		this.magnifierEl.addClass('is-active');
+		this.magnifierBtnEl?.addClass('is-active');
+		// Clone panEl's current render (including its live --dv-* pan/zoom
+		// transform, copied verbatim onto the clone's inline style) so the
+		// loupe shows the same content without needing a second live render.
+		this.magnifierViewportEl.empty();
+		this.magnifierViewportEl.appendChild(this.panEl.cloneNode(true));
+		const rect = this.graphEl.getBoundingClientRect();
+		this.magnifierMx = rect.width / 2;
+		this.magnifierMy = rect.height / 2;
+		this.applyMagnifierTransform();
+	}
+
+	private deactivateMagnifier(): void {
+		this.magnifierActive = false;
+		this.controller?.setSuspended(false);
+		this.graphEl?.removeClass('is-magnifying');
+		this.magnifierEl?.removeClass('is-active');
+		this.magnifierBtnEl?.removeClass('is-active');
+		this.magnifierViewportEl?.empty();
+	}
+
+	private applyMagnifierTransform(): void {
+		if (!this.magnifierActive || !this.magnifierEl || !this.magnifierViewportEl || !this.graphEl) return;
+		this.magnifierEl.setCssProps({
+			'--dv-mag-x': `${this.magnifierMx}px`,
+			'--dv-mag-y': `${this.magnifierMy}px`,
+			'--dv-mag-size': `${this.magnifierRadius * 2}px`,
+		});
+		this.magnifierViewportEl.setCssProps({
+			'--dv-mag-vp-left': `${this.magnifierRadius - this.magnifierMx}px`,
+			'--dv-mag-vp-top': `${this.magnifierRadius - this.magnifierMy}px`,
+			'--dv-mag-vp-w': `${this.graphEl.clientWidth}px`,
+			'--dv-mag-vp-h': `${this.graphEl.clientHeight}px`,
+			'--dv-mag-origin-x': `${this.magnifierMx}px`,
+			'--dv-mag-origin-y': `${this.magnifierMy}px`,
+			'--dv-mag-zoom': `${this.magnifierZoom}`,
+		});
 	}
 
 	private updateStatus(): void {

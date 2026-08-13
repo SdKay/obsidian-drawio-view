@@ -3,7 +3,7 @@
 <img src="./drawio-view-demo.gif" alt="Draw.io View demo" width="720" />
 
 <p>
-  <b>🔍 Zoom &nbsp;·&nbsp; 🖱️ Pan &nbsp;·&nbsp; 📄 Multi-page &nbsp;·&nbsp; 🔗 Shape links &nbsp;·&nbsp; 📦 Third-party libs &nbsp;·&nbsp; 🌙 Dark mode</b>
+  <b>🔍 Zoom &nbsp;·&nbsp; 🖱️ Pan &nbsp;·&nbsp; 📄 Multi-page &nbsp;·&nbsp; 🔗 Shape links &nbsp;·&nbsp; 🔎 Magnifier &nbsp;·&nbsp; 📦 Third-party libs &nbsp;·&nbsp; 🌙 Dark mode</b>
 </p>
 
 <p>
@@ -100,6 +100,7 @@ Go to **Settings → Draw.io View → Shape Libraries** to:
 | **Drag bottom edge** | Resize viewer height |
 | **↗** | Open file in system default editor |
 | **⛶** | Auto-fit to the viewer's current size |
+| **🔍** | Toggle the magnifier |
 | **⊙** | Save current view back into the code block |
 | **Page tabs** | Switch pages (multi-page diagrams) |
 
@@ -108,6 +109,10 @@ Go to **Settings → Draw.io View → Shape Libraries** to:
 ### Shape links
 
 Hover any shape to see a **✎** button. Click it to attach a link to a vault note or external URL. To follow the link, click the shape (exact key depends on the *Click behavior* setting).
+
+### Magnifier
+
+Click **🔍** to inspect fine detail without changing your zoom/pan. A circular loupe follows the cursor at a fixed magnification; **+ / -** change its size. Scroll wheel still zooms the main view as usual. Press **Esc** or click anywhere else to exit.
 
 ---
 

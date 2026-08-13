@@ -57,6 +57,9 @@ export class PanZoomController extends Component {
 	private pinchDist = 0;
 	private pinchCx = 0;
 	private pinchCy = 0;
+	/** Set while an overlay (e.g. the magnifier) owns wheel/pointer input instead. */
+	private suspended = false;
+
 	/** Whether the current/last pointer interaction actually moved (pan or pinch). */
 	private gestured = false;
 
@@ -72,6 +75,8 @@ export class PanZoomController extends Component {
 	onload(): void {
 		// ── Wheel zoom (desktop) ──────────────────────────────────────────────
 		this.registerDomEvent(this.graphEl, 'wheel', (e: WheelEvent) => {
+			// Deliberately NOT suspended by the magnifier — wheel still zooms
+			// the main view even while it's active (see setSuspended's doc).
 			if (this.getSettings().zoomModifier === 'ctrl' && !e.ctrlKey && !e.metaKey) return;
 			e.preventDefault();
 			e.stopPropagation();
@@ -116,6 +121,24 @@ export class PanZoomController extends Component {
 		this.panEl.setCssProps({ '--dv-tx': '0px', '--dv-ty': '0px', '--dv-scale': '1' });
 	}
 
+	/**
+	 * Suspend pointer-driven panning so an overlay (the magnifier) can own
+	 * drag gestures instead, without the two fighting over the same
+	 * pointermove — the magnifier's loupe needs to track the cursor, not pan
+	 * the diagram. Wheel zoom is deliberately NOT gated by this: it keeps
+	 * zooming the main view even while an overlay is active.
+	 */
+	setSuspended(suspended: boolean): void {
+		this.suspended = suspended;
+		if (suspended) {
+			this.cancelCommit();
+			this.pointers.clear();
+			this.panning = false;
+			this.graphEl.removeClass('is-grabbing');
+			this.panEl.removeClass('is-panning');
+		}
+	}
+
 	/** Fold the visual transform into the committed view immediately. */
 	flush(): void {
 		this.flushView();
@@ -124,6 +147,7 @@ export class PanZoomController extends Component {
 	// ── Pointer handlers ────────────────────────────────────────────────────────
 
 	private onPointerDown(e: PointerEvent): void {
+		if (this.suspended) return;
 		// Ignore non-primary mouse buttons; touch/pen report button 0.
 		if (e.pointerType === 'mouse' && e.button !== 0) return;
 		e.preventDefault();

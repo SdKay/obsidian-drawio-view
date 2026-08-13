@@ -10,6 +10,7 @@ const STRINGS = {
 	applyView: { en: 'Apply current view to code block', zh: '将当前视图保存到代码块' },
 	editLink: { en: 'Edit link', zh: '编辑链接' },
 	resizeHandle: { en: 'Drag to resize height', zh: '拖动调整高度' },
+	magnifier: { en: 'Magnifier (+/- to resize, Esc to exit)', zh: '放大镜（+/- 调整范围，Esc 退出）' },
 } satisfies Record<string, { en: string; zh: string }>;
 
 export function t(key: keyof typeof STRINGS): string {

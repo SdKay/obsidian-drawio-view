@@ -107,6 +107,9 @@ Do **not** add a `libs:` line — the plugin manages shape libraries automatical
 ## What the plugin handles automatically
 
 - **Zoom / pan** — the user interacts with the viewer directly.
+- **Magnifier** — a 🔍 toolbar button lets the user inspect fine detail with a
+  cursor-following loupe, independent of the code block's zoom/offset params.
+  Nothing an agent needs to configure.
 - **Shape libraries** — if the diagram uses AWS, Azure, Cisco, or other
   extended shapes, the plugin detects this and prompts the user to download
   the required library. No agent action needed.

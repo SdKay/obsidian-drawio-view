@@ -119,6 +119,47 @@
     display: block;
 }
 
+/* ── Magnifier (loupe) ───────────────────────────────────── */
+/* Sibling of panEl, inside graphEl — so it clips against graphEl's own
+   overflow: hidden box near the viewport edges. */
+.drawio-view-magnifier {
+    display: none;
+    position: absolute;
+    left: var(--dv-mag-x, 0px);
+    top: var(--dv-mag-y, 0px);
+    width: var(--dv-mag-size, 180px);
+    height: var(--dv-mag-size, 180px);
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid var(--interactive-accent);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    background: var(--background-primary);
+    pointer-events: none;
+    z-index: 8;
+}
+
+.drawio-view-magnifier.is-active {
+    display: block;
+}
+
+/* Re-scaled clone of panEl's live render, positioned so the point under the
+   cursor lands at the circle's center (transform-origin does the anchoring —
+   see applyMagnifierTransform() in viewer.ts). */
+.drawio-view-magnifier-viewport {
+    position: absolute;
+    left: var(--dv-mag-vp-left, 0px);
+    top: var(--dv-mag-vp-top, 0px);
+    width: var(--dv-mag-vp-w, 100%);
+    height: var(--dv-mag-vp-h, 100%);
+    transform-origin: var(--dv-mag-origin-x, 0px) var(--dv-mag-origin-y, 0px);
+    transform: scale(var(--dv-mag-zoom, 2.5));
+}
+
+.drawio-view-graph.is-magnifying {
+    cursor: crosshair;
+}
+
 /* ── Dark theme ──────────────────────────────────────────── */
 /* Invert + hue-rotate so diagrams read naturally on dark backgrounds.
    Applied to the clipping viewport so border/HUD/tabs are unaffected. */
@@ -335,6 +376,7 @@
    button base styles (e.g. button:not(.clickable-icon) { background: … }). */
 .drawio-view-hud .drawio-view-open-btn,
 .drawio-view-hud .drawio-view-fit-btn,
+.drawio-view-hud .drawio-view-magnifier-btn,
 .drawio-view-hud .drawio-view-update-btn {
     pointer-events: auto;
     background: transparent;
@@ -349,6 +391,7 @@
 
 .drawio-view-hud .drawio-view-open-btn:hover,
 .drawio-view-hud .drawio-view-fit-btn:hover,
+.drawio-view-hud .drawio-view-magnifier-btn:hover,
 .drawio-view-hud .drawio-view-update-btn:hover {
     color: var(--interactive-accent);
     background: transparent;
@@ -356,9 +399,14 @@
 
 .drawio-view-hud .drawio-view-open-btn:focus-visible,
 .drawio-view-hud .drawio-view-fit-btn:focus-visible,
+.drawio-view-hud .drawio-view-magnifier-btn:focus-visible,
 .drawio-view-hud .drawio-view-update-btn:focus-visible {
     outline: 2px solid var(--interactive-accent);
     outline-offset: -2px;
+}
+
+.drawio-view-hud .drawio-view-magnifier-btn.is-active {
+    color: var(--interactive-accent);
 }
 
 /* ── Wiki-embed wrapper ──────────────────────────────────── */
