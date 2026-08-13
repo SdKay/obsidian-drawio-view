@@ -3,7 +3,7 @@
     "name": "Draw.io View",
     "version": "0.0.11",
     "minAppVersion": "1.8.7",
-    "description": "Render draw.io diagrams inline in your notes with zoom, pan, and multi-page support.",
+    "description": "Render draw.io diagrams inline in your notes — zoom, pan, multi-page tabs, shape links, a magnifier, and third-party shape libraries.",
     "author": "sdking.xing",
     "authorUrl": "https://github.com/SdKay",
     "isDesktopOnly": false
